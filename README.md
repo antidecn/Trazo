@@ -30,6 +30,7 @@
 | Flecha · Rectángulo · Elipse · Texto | <kbd>A</kbd> · <kbd>R</kbd> · <kbd>E</kbd> · <kbd>T</kbd> |
 | Cuentagotas | <kbd>I</kbd> |
 | Leer texto (OCR) | <kbd>O</kbd> |
+| Cambiar el grosor (o el tamaño del texto, con la herramienta Texto o un texto seleccionado) | <kbd>Ctrl</kbd>+rueda del ratón |
 | Deshacer | <kbd>Ctrl</kbd>+<kbd>Z</kbd> |
 | Borrar el elemento seleccionado | <kbd>Supr</kbd> |
 | Copiar y cerrar | <kbd>Ctrl</kbd>+<kbd>C</kbd> o <kbd>Intro</kbd> |

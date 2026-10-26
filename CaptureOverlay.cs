@@ -59,6 +59,10 @@ namespace Trazo {
         // Redimensionado del elemento seleccionado con sus tiradores
         private Edge shapeResize;
         private Rectangle shapeOrigin;
+        // Ctrl+rueda: giro acumulado y elemento de la última racha, para deshacerla de una vez
+        private int wheelDelta;
+        private Shape? wheelShape;
+        private int wheelUndoDepth = -1;
 
         private readonly AppSettings settings;
         private Color strokeColor;
@@ -900,6 +904,56 @@ namespace Trazo {
         /// Doble clic sobre un elemento: lo selecciona y, si se mantiene pulsado, se arrastra.
         /// Doble clic sobre un texto ya seleccionado: se edita.
         /// </summary>
+        protected override void OnMouseWheel(MouseEventArgs e) {
+            base.OnMouseWheel(e);
+            WheelStyle(e);
+        }
+
+        /// <summary>
+        /// Ctrl+rueda: tamaño del texto (con la herramienta Texto o un texto seleccionado o en edición)
+        /// o grosor de líneas y bordes, saltando por los mismos valores que los desplegables.
+        /// </summary>
+        private void WheelStyle(MouseEventArgs e) {
+            if (phase != Phase.Editing || (ModifierKeys & Keys.Control) == 0) return;
+            if (e is HandledMouseEventArgs handled) handled.Handled = true;
+
+            // Los paneles táctiles mandan giros pequeños: se acumulan hasta una muesca
+            wheelDelta += e.Delta;
+            int steps = wheelDelta / SystemInformation.MouseWheelScrollDelta;
+            if (steps == 0) return;
+            wheelDelta -= steps * SystemInformation.MouseWheelScrollDelta;
+
+            // Una racha de giros sobre el mismo elemento se deshace de una vez
+            bool coalesce = selected != null && selected == wheelShape && undoStack.Count == wheelUndoDepth;
+            int depth = undoStack.Count;
+
+            TextShape? text = editingText ?? selected as TextShape;
+            if (text != null || (tool == Tool.Text && selected == null)) {
+                float size = StepValue(TextSizes, text?.FontSize ?? textSize, steps);
+                SetTextSize(size);
+                ShowStatus($"Tamaño del texto: {size} px");
+            } else {
+                strokeWidth = StepValue(Widths, selected?.Width ?? strokeWidth, steps);
+                DrawingStyleChanged(s => s.Width = strokeWidth);
+                ShowStatus($"Grosor: {strokeWidth} px");
+            }
+
+            if (coalesce && undoStack.Count > depth) undoStack.Pop();
+            wheelShape = selected;
+            wheelUndoDepth = undoStack.Count;
+        }
+
+        /// <summary>El valor de la lista que queda <paramref name="steps"/> posiciones por encima o por debajo.</summary>
+        private static float StepValue(float[] values, float current, int steps) {
+            int i = steps > 0
+                ? Array.FindLastIndex(values, v => v <= current)
+                : Array.FindIndex(values, v => v >= current);
+            if (i < 0) i = steps > 0 ? -1 : values.Length;
+            float next = values[Math.Max(0, Math.Min(values.Length - 1, i + steps))];
+            // Fuera de la lista (p. ej. un tamaño elegido con "Otra fuente…") nunca se mueve al revés
+            return steps > 0 ? Math.Max(next, current) : Math.Min(next, current);
+        }
+
         protected override void OnMouseDoubleClick(MouseEventArgs e) {
             base.OnMouseDoubleClick(e);
             if (phase != Phase.Editing || textEditor != null || e.Button != MouseButtons.Left) return;
@@ -1341,6 +1395,8 @@ namespace Trazo {
             };
             // Flechas, Inicio, Fin…: el cursor se mueve sin cambiar el texto
             textEditor.KeyUp += (_, _) => ResetCaret();
+            // Mientras se escribe, la rueda le llega al cuadro de texto
+            textEditor.MouseWheel += (_, e) => WheelStyle(e);
 
             Controls.Add(textEditor);
             textEditor.Focus();
