@@ -1,0 +1,8 @@
+# Archivos de Illustrator y PDF: aunque tengan partes de texto, son binarios.
+# Sin esto, Git podría cambiar sus saltos de línea y corromperlos.
+*.ai binary
+*.pdf binary
+*.ico binary
+*.bmp binary
+*.png binary
+*.msi binary

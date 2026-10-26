@@ -1,0 +1,47 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- .NET Framework 4.8 viene de serie en Windows 11 (y en Windows 10 desde 1903): no hay nada que instalar aparte -->
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Los usings comunes están en GlobalUsings.cs -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Trazo</RootNamespace>
+    <AssemblyName>Trazo</AssemblyName>
+    <ApplicationIcon>Trazo.ico</ApplicationIcon>
+    <!-- Declara compatibilidad con Windows 10/11; la alta resolución (PerMonitorV2) se activa en App.config -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+
+    <Version>1.2.0</Version>
+    <Product>Trazo</Product>
+    <Company>Antidecn</Company>
+    <Description>Capturas de pantalla con anotaciones, cuentagotas y OCR</Description>
+    <SatelliteResourceLanguages>es</SatelliteResourceLanguages>
+
+    <!-- El instalador es un proyecto aparte -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);installer\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Trazo.ico" LogicalName="Trazo.ico" />
+    <EmbeddedResource Include="TrazoTray.ico" LogicalName="TrazoTray.ico" />
+    <EmbeddedResource Include="TrazoTrayBlack.ico" LogicalName="TrazoTrayBlack.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Configuración en JSON con el serializador integrado de .NET Framework -->
+    <Reference Include="System.Runtime.Serialization" />
+    <!-- APIs de Windows 10/11 (OCR) desde .NET Framework; solo referencias, no se copia nada al instalar -->
+    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.19041.1" />
+  </ItemGroup>
+
+</Project>

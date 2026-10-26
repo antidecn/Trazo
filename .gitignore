@@ -1,0 +1,14 @@
+# Resultados de compilación (aplicación e instalador)
+bin/
+obj/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+
+# Sistema
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,228 @@
+using System.Drawing.Drawing2D;
+
+namespace Trazo {
+
+    /// <summary>
+    /// Elemento dibujado sobre la captura. Se guarda como vector para poder moverlo,
+    /// recolorearlo o borrarlo antes de exportar.
+    /// </summary>
+    internal abstract class Shape {
+
+        /// <summary>Distancia en píxeles a la que se considera que el ratón está "sobre" un trazo.</summary>
+        protected const float HitTolerance = 7;
+
+        public Color Stroke { get; set; } = Color.Red;
+        public Color? Fill { get; set; }
+        public float Width { get; set; } = 3;
+
+        public abstract void Draw(Graphics g);
+        public abstract Rectangle Bounds { get; }
+        public abstract bool HitTest(Point p);
+        public abstract void Offset(int dx, int dy);
+
+        public Shape Clone() => (Shape)MemberwiseClone();
+
+        protected Pen CreatePen() => new(Stroke, Width) { LineJoin = LineJoin.Round, StartCap = LineCap.Round, EndCap = LineCap.Round };
+
+        protected static Rectangle Normalize(Point a, Point b) =>
+            Rectangle.FromLTRB(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Max(a.X, b.X), Math.Max(a.Y, b.Y));
+
+        protected Rectangle Padded(Rectangle r) {
+            int pad = (int)Math.Ceiling(Width) + 2;
+            r.Inflate(pad, pad);
+            return r;
+        }
+    }
+
+    /// <summary>Figura definida por dos esquinas (rectángulo, elipse).</summary>
+    internal abstract class BoxShape : Shape {
+
+        public Point Start { get; set; }
+        public Point End { get; set; }
+
+        public Rectangle Rect => Normalize(Start, End);
+        public override Rectangle Bounds => Padded(Rect);
+
+        public override void Offset(int dx, int dy) {
+            Start = new Point(Start.X + dx, Start.Y + dy);
+            End = new Point(End.X + dx, End.Y + dy);
+        }
+
+        protected abstract void AddToPath(GraphicsPath path, Rectangle r);
+
+        public override void Draw(Graphics g) {
+            Rectangle r = Rect;
+            if (r.Width < 1 || r.Height < 1) return;
+            using var path = new GraphicsPath();
+            AddToPath(path, r);
+            if (Fill is Color fill) {
+                using var brush = new SolidBrush(fill);
+                g.FillPath(brush, path);
+            }
+            using var pen = CreatePen();
+            g.DrawPath(pen, path);
+        }
+
+        public override bool HitTest(Point p) {
+            Rectangle r = Rect;
+            if (r.Width < 1 || r.Height < 1) return false;
+            using var path = new GraphicsPath();
+            AddToPath(path, r);
+            if (Fill != null && path.IsVisible(p)) return true;
+            using var pen = new Pen(Color.Black, Width + HitTolerance * 2);
+            return path.IsOutlineVisible(p, pen);
+        }
+    }
+
+    internal sealed class RectangleShape : BoxShape {
+        protected override void AddToPath(GraphicsPath path, Rectangle r) => path.AddRectangle(r);
+    }
+
+    internal sealed class EllipseShape : BoxShape {
+        protected override void AddToPath(GraphicsPath path, Rectangle r) => path.AddEllipse(r);
+    }
+
+    internal sealed class ArrowShape : Shape {
+
+        public Point Start { get; set; }
+        public Point End { get; set; }
+
+        private float HeadLength => Math.Max(12, Width * 4);
+
+        public override Rectangle Bounds {
+            get {
+                Rectangle r = Normalize(Start, End);
+                int pad = (int)Math.Ceiling(HeadLength);
+                r.Inflate(pad, pad);
+                return r;
+            }
+        }
+
+        public override void Offset(int dx, int dy) {
+            Start = new Point(Start.X + dx, Start.Y + dy);
+            End = new Point(End.X + dx, End.Y + dy);
+        }
+
+        public override void Draw(Graphics g) {
+            float dx = End.X - Start.X, dy = End.Y - Start.Y;
+            float len = (float)Math.Sqrt(dx * dx + dy * dy);
+            if (len < 1) return;
+
+            float ux = dx / len, uy = dy / len;
+            float head = Math.Min(HeadLength, len);
+            float halfWidth = head * 0.55f;
+
+            // La línea termina en la base de la punta para que no asome por delante
+            var baseCenter = new PointF(End.X - ux * head, End.Y - uy * head);
+            using (var pen = CreatePen()) {
+                g.DrawLine(pen, Start, baseCenter);
+            }
+
+            PointF[] tip = {
+                End,
+                new(baseCenter.X - uy * halfWidth, baseCenter.Y + ux * halfWidth),
+                new(baseCenter.X + uy * halfWidth, baseCenter.Y - ux * halfWidth),
+            };
+            using var brush = new SolidBrush(Stroke);
+            g.FillPolygon(brush, tip);
+        }
+
+        public override bool HitTest(Point p) {
+            using var path = new GraphicsPath();
+            path.AddLine(Start, End);
+            using var pen = new Pen(Color.Black, Width + HitTolerance * 2);
+            return path.IsOutlineVisible(p, pen);
+        }
+    }
+
+    internal sealed class TextShape : Shape {
+
+        private const float Padding = 4;
+        private static readonly Graphics Measurer = CreateMeasurer();
+        // Formato tipográfico: lo que se mide coincide exactamente con lo que se dibuja (necesario para el cursor)
+        private static readonly StringFormat Format = CreateFormat();
+
+        public Point Location { get; set; }
+        public string Text { get; set; } = "";
+        public const string DefaultFontFamily = "Arial";
+
+        public string FontFamily { get; set; } = DefaultFontFamily;
+        /// <summary>Altura de la fuente en píxeles de la captura.</summary>
+        public float FontSize { get; set; } = 24;
+
+        /// <summary>
+        /// Negrita si la fuente la tiene (se lee mejor sobre capturas); si no, su estilo normal.
+        /// Si la fuente ya no está instalada, se usa Arial.
+        /// </summary>
+        public Font CreateFont() {
+            try {
+                using var family = new FontFamily(FontFamily);
+                FontStyle style = family.IsStyleAvailable(FontStyle.Bold) ? FontStyle.Bold
+                    : family.IsStyleAvailable(FontStyle.Regular) ? FontStyle.Regular
+                    : family.IsStyleAvailable(FontStyle.Italic) ? FontStyle.Italic
+                    : FontStyle.Bold | FontStyle.Italic;
+                return new Font(family, FontSize, style, GraphicsUnit.Pixel);
+            } catch (ArgumentException) {
+                return new Font(DefaultFontFamily, FontSize, FontStyle.Bold, GraphicsUnit.Pixel);
+            }
+        }
+
+        private static Graphics CreateMeasurer() {
+            var g = Graphics.FromImage(new Bitmap(1, 1));
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+            return g;
+        }
+
+        private static StringFormat CreateFormat() {
+            var format = (StringFormat)StringFormat.GenericTypographic.Clone();
+            format.FormatFlags |= StringFormatFlags.MeasureTrailingSpaces;
+            return format;
+        }
+
+        private float LineHeight(Font font) => font.GetHeight(Measurer);
+
+        private SizeF Measure() {
+            using var font = CreateFont();
+            SizeF size = Text.Length == 0 ? new SizeF(FontSize * 0.5f, 0) : Measurer.MeasureString(Text, font, PointF.Empty, Format);
+            int lines = Text.Split('\n').Length;
+            float height = Math.Max(size.Height, lines * LineHeight(font));
+            return new SizeF(size.Width + Padding * 2, height + Padding * 2);
+        }
+
+        /// <summary>Línea vertical donde se dibuja el cursor de escritura para la posición indicada.</summary>
+        public (PointF top, PointF bottom) Caret(int index) {
+            using var font = CreateFont();
+            string prefix = Text.Substring(0, MathUtil.Clamp(index, 0, Text.Length));
+            int line = prefix.Count(c => c == '\n');
+            string lineText = prefix.Substring(prefix.LastIndexOf('\n') + 1).TrimEnd('\r');
+
+            float x = lineText.Length == 0 ? 0 : Measurer.MeasureString(lineText, font, PointF.Empty, Format).Width;
+            float lineHeight = LineHeight(font);
+            var top = new PointF(Location.X + Padding + x, Location.Y + Padding + line * lineHeight);
+            return (top, new PointF(top.X, top.Y + lineHeight));
+        }
+
+        public override Rectangle Bounds {
+            get {
+                SizeF s = Measure();
+                return new Rectangle(Location, Size.Ceiling(s));
+            }
+        }
+
+        public override void Offset(int dx, int dy) => Location = new Point(Location.X + dx, Location.Y + dy);
+
+        public override void Draw(Graphics g) {
+            if (Text.Length == 0) return;
+            Rectangle r = Bounds;
+            if (Fill is Color fill) {
+                using var back = new SolidBrush(fill);
+                g.FillRectangle(back, r);
+            }
+            using var font = CreateFont();
+            using var brush = new SolidBrush(Stroke);
+            g.DrawString(Text, font, brush, new PointF(Location.X + Padding, Location.Y + Padding), Format);
+        }
+
+        public override bool HitTest(Point p) => Bounds.Contains(p);
+    }
+}

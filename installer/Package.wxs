@@ -1,0 +1,239 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <!--
+    Paquete de doble ámbito: el asistente pregunta si instalar solo para el usuario actual
+    (sin permisos de administrador) o para todos los usuarios (pide permisos al instalar).
+
+    Sin interfaz:  msiexec /i Trazo.msi /qn                          → solo para el usuario actual
+                   msiexec /i Trazo.msi /qn MSIINSTALLPERUSER=""     → para todos (desde una consola de administrador)
+  -->
+  <Package Name="Trazo"
+           Manufacturer="Antidecn"
+           Version="$(Version)"
+           UpgradeCode="9e0df3ca-4a90-4614-a399-1fd8b3c63bd0"
+           Scope="perUserOrMachine"
+           Language="3082"
+           Codepage="1252">
+
+    <SummaryInformation Description="Trazo: capturas de pantalla con anotaciones y OCR" />
+
+    <!--
+      Actualización: una versión mayor (por ejemplo 1.0.1 → 1.1.0) desinstala la anterior antes de instalarse.
+      Solo detecta la anterior si se instala para los mismos usuarios: por eso el asistente mantiene el tipo
+      de instalación y la carpeta de la versión que ya hay (ver PREVIOUSSCOPE).
+      La configuración del usuario (%AppData%\Trazo) no se toca al actualizar.
+    -->
+    <MajorUpgrade DowngradeErrorMessage="Ya hay instalada una versión más reciente de Trazo." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="TrazoIcon" SourceFile="$(AppDir)Trazo.ico" />
+    <Property Id="ARPPRODUCTICON" Value="TrazoIcon" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <!--
+      Trazo usa .NET Framework 4.8, que viene de serie en Windows 11 y en Windows 10 desde la versión 1903.
+      Solo en equipos muy desactualizados faltaría (valor "Release" de 528040 = 4.8).
+    -->
+    <Property Id="NETFRAMEWORK4RELEASE">
+      <RegistrySearch Id="NetFramework4Release" Root="HKLM" Key="SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" Name="Release" Type="raw" Bitness="always64" />
+    </Property>
+    <Launch Condition="Installed OR NETFRAMEWORK4RELEASE &gt;= &quot;#528040&quot;"
+            Message="Trazo necesita .NET Framework 4.8, que se incluye en Windows 11 y en Windows 10 actualizado.&#13;&#10;&#13;&#10;Instala las actualizaciones de Windows o descárgalo desde https://dotnet.microsoft.com/download/dotnet-framework/net48 y vuelve a abrir este instalador." />
+
+    <!-- Cierra Trazo si está abierto antes de actualizar o desinstalar -->
+    <util:CloseApplication Id="CloseTrazo" Target="Trazo.exe" CloseMessage="yes" TerminateProcess="0" RebootPrompt="no" />
+
+    <!--
+      Carpeta por defecto. En instalaciones solo para el usuario, Windows redirige
+      "Archivos de programa" a %LocalAppData%\Programs automáticamente.
+    -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Trazo" />
+    </StandardDirectory>
+
+    <!-- Carpetas de instalaciones anteriores (para actualizar en el mismo sitio) -->
+    <Property Id="USERINSTALLFOLDER">
+      <RegistrySearch Id="PreviousUserFolder" Root="HKCU" Key="Software\Trazo" Name="InstallFolder" Type="raw" />
+    </Property>
+    <Property Id="MACHINEINSTALLFOLDER">
+      <RegistrySearch Id="PreviousMachineFolder" Root="HKLM" Key="Software\Trazo" Name="InstallFolder" Type="raw" Bitness="always64" />
+    </Property>
+
+    <!-- Instalación anterior encontrada (antes de rellenar las carpetas por defecto): "user" o "machine" -->
+    <SetProperty Action="DetectPreviousUserInstall" Id="PREVIOUSSCOPE" Value="user" After="AppSearch" Sequence="ui"
+                 Condition="USERINSTALLFOLDER" />
+    <SetProperty Action="DetectPreviousMachineInstall" Id="PREVIOUSSCOPE" Value="machine" After="DetectPreviousUserInstall" Sequence="ui"
+                 Condition="MACHINEINSTALLFOLDER AND NOT USERINSTALLFOLDER" />
+
+    <!-- Opción marcada al abrir el asistente: "solo para mí", salvo que ya estuviera instalado para todos -->
+    <Property Id="INSTALLSCOPE" Value="user" />
+    <SetProperty Action="SetScopeFromPreviousInstall" Id="INSTALLSCOPE" Value="[PREVIOUSSCOPE]" After="DetectPreviousMachineInstall" Sequence="ui"
+                 Condition="PREVIOUSSCOPE" />
+    <SetProperty Action="SetDefaultUserFolder" Id="USERINSTALLFOLDER" Value="[LocalAppDataFolder]Programs\Trazo\" After="SetScopeFromPreviousInstall" Sequence="ui"
+                 Condition="NOT USERINSTALLFOLDER" />
+    <SetProperty Action="SetDefaultMachineFolder" Id="MACHINEINSTALLFOLDER" Value="[%ProgramW6432]\Trazo\" After="SetDefaultUserFolder" Sequence="ui"
+                 Condition="NOT MACHINEINSTALLFOLDER" />
+
+    <!-- Sin interfaz (actualizaciones silenciosas): reutiliza la carpeta anterior del ámbito elegido -->
+    <SetProperty Action="UsePreviousUserFolder" Id="INSTALLFOLDER" Value="[USERINSTALLFOLDER]" Before="CostFinalize" Sequence="execute"
+                 Condition="NOT INSTALLFOLDER AND USERINSTALLFOLDER AND ALLUSERS = 2 AND MSIINSTALLPERUSER = 1" />
+    <SetProperty Action="UsePreviousMachineFolder" Id="INSTALLFOLDER" Value="[MACHINEINSTALLFOLDER]" After="UsePreviousUserFolder" Sequence="execute"
+                 Condition="NOT INSTALLFOLDER AND MACHINEINSTALLFOLDER AND (ALLUSERS = 1 OR NOT MSIINSTALLPERUSER)" />
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Component Id="TrazoExe">
+        <File Id="TrazoExe" Source="$(PublishDir)Trazo.exe" />
+        <!-- HKMU: HKCU si es solo para el usuario, HKLM si es para todos -->
+        <RegistryValue Root="HKMU" Key="Software\Trazo" Name="InstallFolder" Type="string" Value="[INSTALLFOLDER]" />
+        <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      </Component>
+      <Files Include="$(PublishDir)**">
+        <Exclude Files="$(PublishDir)Trazo.exe" />
+      </Files>
+    </ComponentGroup>
+
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder">
+      <Shortcut Id="TrazoShortcut"
+                Name="Trazo"
+                Description="Capturas de pantalla con anotaciones y OCR"
+                Target="[INSTALLFOLDER]Trazo.exe"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="TrazoIcon" />
+      <RegistryValue Root="HKMU" Key="Software\Trazo" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!--
+      Inicio automático para quien instala. Va en HKCU también en instalaciones para todos,
+      para que cada usuario pueda activarlo o quitarlo desde Configuración sin ser administrador.
+    -->
+    <Component Id="Autostart" Directory="INSTALLFOLDER">
+      <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="Trazo"
+                     Type="string" Value="&quot;[INSTALLFOLDER]Trazo.exe&quot;" KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Main" Title="Trazo">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="Autostart" />
+    </Feature>
+
+    <!--
+      Al desinstalar: Trazo pregunta si borrar también la configuración del usuario (%AppData%\Trazo).
+      No se pregunta al actualizar ni en desinstalaciones silenciosas (/qn): entonces se conserva.
+      Va antes de RemoveFiles, mientras Trazo.exe sigue instalado.
+    -->
+    <CustomAction Id="AskDeleteUserData" FileRef="TrazoExe" ExeCommand="--desinstalar" Execute="immediate" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="AskDeleteUserData" Before="RemoveFiles"
+              Condition="REMOVE ~= &quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 2" />
+    </InstallExecuteSequence>
+
+    <!-- Al terminar: casilla "Abrir Trazo" marcada por defecto -->
+    <CustomAction Id="LaunchTrazo" FileRef="TrazoExe" ExeCommand="" Execute="immediate" Impersonate="yes" Return="asyncNoWait" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Abrir Trazo" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+
+    <UIRef Id="TrazoUI" />
+    <!-- Imágenes del asistente: se generan con assets\build-assets.ps1 -->
+    <WixVariable Id="WixUIBannerBmp" Value="$(sys.SOURCEFILEDIR)banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(sys.SOURCEFILEDIR)dialog.bmp" />
+  </Package>
+
+  <!--
+    Interfaz: Bienvenida → Tipo de instalación → Carpeta de destino → Listo para instalar → Progreso → Fin.
+  -->
+  <Fragment>
+    <UI Id="TrazoUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Segoe UI" Size="9" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Segoe UI" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Segoe UI" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+      <DialogRef Id="WelcomeDlg" />
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="DiskCostDlg" />
+      <DialogRef Id="InvalidDirDlg" />
+
+      <!-- Tipo de instalación: siempre muestra las dos opciones -->
+      <Dialog Id="TrazoScopeDlg" Width="370" Height="270" Title="Instalación de Trazo">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="250" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Tipo de instalación" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="¿Para quién quieres instalar Trazo?" />
+
+        <Control Id="Scope" Type="RadioButtonGroup" X="20" Y="58" Width="330" Height="140" Property="INSTALLSCOPE">
+          <RadioButtonGroup Property="INSTALLSCOPE">
+            <RadioButton Value="user" X="0" Y="0" Width="320" Height="16" Text="Solo para mí (recomendado)" />
+            <RadioButton Value="machine" X="0" Y="62" Width="320" Height="16" Text="Para todos los usuarios de este equipo" />
+          </RadioButtonGroup>
+        </Control>
+        <Control Id="UserDescription" Type="Text" X="33" Y="76" Width="310" Height="36" NoPrefix="yes"
+                 Text="Se instala en tu carpeta de usuario (%LocalAppData%\Programs). No necesita permisos de administrador." />
+        <Control Id="MachineDescription" Type="Text" X="33" Y="138" Width="310" Height="36" NoPrefix="yes"
+                 Text="Se instala en Archivos de programa y aparece para todas las cuentas del equipo. Windows pedirá permisos de administrador al instalar." />
+
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="TrazoScopeDlg" Condition="NOT Installed AND NOT PREVIOUSSCOPE" />
+
+      <!-- Actualización: mismo tipo de instalación y misma carpeta que la versión anterior, directo a "Listo para instalar" -->
+      <Publish Dialog="WelcomeDlg" Control="Next" Property="MSIINSTALLPERUSER" Value="1" Order="1" Condition="NOT Installed AND PREVIOUSSCOPE = &quot;user&quot;" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Property="MSIINSTALLPERUSER" Value="{}" Order="2" Condition="NOT Installed AND PREVIOUSSCOPE = &quot;machine&quot;" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Property="INSTALLFOLDER" Value="[USERINSTALLFOLDER]" Order="3" Condition="NOT Installed AND PREVIOUSSCOPE = &quot;user&quot;" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Property="INSTALLFOLDER" Value="[MACHINEINSTALLFOLDER]" Order="4" Condition="NOT Installed AND PREVIOUSSCOPE = &quot;machine&quot;" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="5" Condition="NOT Installed AND PREVIOUSSCOPE" />
+
+      <!-- Al elegir el tipo se fija el ámbito y se propone la carpeta correspondiente -->
+      <Publish Dialog="TrazoScopeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
+      <Publish Dialog="TrazoScopeDlg" Control="Next" Property="MSIINSTALLPERUSER" Value="1" Order="1" Condition="INSTALLSCOPE = &quot;user&quot;" />
+      <Publish Dialog="TrazoScopeDlg" Control="Next" Property="MSIINSTALLPERUSER" Value="{}" Order="2" Condition="INSTALLSCOPE = &quot;machine&quot;" />
+      <Publish Dialog="TrazoScopeDlg" Control="Next" Property="INSTALLFOLDER" Value="[USERINSTALLFOLDER]" Order="3" Condition="INSTALLSCOPE = &quot;user&quot;" />
+      <Publish Dialog="TrazoScopeDlg" Control="Next" Property="INSTALLFOLDER" Value="[MACHINEINSTALLFOLDER]" Order="4" Condition="INSTALLSCOPE = &quot;machine&quot;" />
+      <Publish Dialog="TrazoScopeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="5" />
+
+      <!-- Elegir carpeta: "Cambiar…" abre el explorador de carpetas y se valida la ruta antes de seguir -->
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="TrazoScopeDlg" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath_$(sys.BUILDARCHSHORT)" Order="2" Condition="NOT WIXUI_DONTVALIDATEPATH" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction" Value="WixUIValidatePath_$(sys.BUILDARCHSHORT)" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="4" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" Order="1" Condition="NOT Installed AND NOT PREVIOUSSCOPE" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="NOT Installed AND PREVIOUSSCOPE" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchTrazo"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+    </UI>
+
+    <UIRef Id="WixUI_Common" />
+  </Fragment>
+</Wix>
