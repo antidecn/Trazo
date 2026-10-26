@@ -33,6 +33,7 @@
 | Deshacer | <kbd>Ctrl</kbd>+<kbd>Z</kbd> |
 | Borrar el elemento seleccionado | <kbd>Supr</kbd> |
 | Copiar y cerrar | <kbd>Ctrl</kbd>+<kbd>C</kbd> o <kbd>Intro</kbd> |
+| Copiar el color bajo el cursor y cerrar (antes de elegir zona) | <kbd>Ctrl</kbd>+<kbd>C</kbd> |
 | Guardar como imagen | <kbd>Ctrl</kbd>+<kbd>S</kbd> |
 | Cerrar sin guardar | <kbd>Esc</kbd> |
 

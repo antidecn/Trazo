@@ -745,7 +745,7 @@ namespace Trazo {
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
 
-        private static GraphicsPath RoundedRect(Rectangle r, int radius) {
+        internal static GraphicsPath RoundedRect(Rectangle r, int radius) {
             int d = radius * 2;
             var path = new GraphicsPath();
             path.AddArc(r.X, r.Y, d, d, 180, 90);
@@ -1511,6 +1511,18 @@ namespace Trazo {
                 } else {
                     Close();
                 }
+                return true;
+            }
+
+            // Antes de elegir zona la lupa ya muestra el color: Ctrl+C lo copia sin pasar por el cuentagotas
+            // y cierra, dejando el aviso en una ventana aparte
+            if (phase == Phase.Selecting && keyData == (Keys.Control | Keys.C)) {
+                if (!ClientRectangle.Contains(mouse)) return true;
+                Color c = PixelAt(mouse);
+                string hex = $"#{c.R:X2}{c.G:X2}{c.B:X2}";
+                Clipboard.SetText(hex);
+                ColorToast.Show($"Color {hex} (RGB {c.R}, {c.G}, {c.B}) copiado al portapapeles", c, PointToScreen(mouse));
+                Close();
                 return true;
             }
 
