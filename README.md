@@ -62,9 +62,9 @@ Comparativa medida en el mismo equipo (Intel Core i5-14500, 32 GB de RAM, Window
 
 | | Trazo | Lightshot | Recortes de Windows |
 |---|---|---|---|
-| RAM en reposo | **2–6 MB** | 27–31 MB | 0 MB (sin proceso) |
-| RAM con la captura abierta | 83 MB | **63 MB** | 177 MB |
-| RAM 10 s después de cerrar la captura | **2 MB** | 47 MB | 168 MB |
+| RAM en reposo | **1–8 MB** | 27–31 MB | 0 MB (sin proceso hasta que se usa) |
+| RAM con la captura abierta | 88–102 MB | **63 MB** | 176–200 MB |
+| RAM 10 s después de cerrar la captura | **4 MB** | 47 MB | 184 MB (se queda en memoria) |
 | Espacio en disco | **0,2 MB** | 5,3 MB | 586 MB |
 | Tareas en segundo plano | **Ninguna** | Actualizador cada 4 h | Ninguna propia |
 

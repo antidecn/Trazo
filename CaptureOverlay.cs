@@ -430,6 +430,8 @@ namespace Trazo {
 
         private void SetTool(Tool t) {
             CommitText();
+            // Al cambiar de herramienta se suelta el elemento seleccionado
+            if (t != tool) Deselect();
             tool = t;
             foreach (KeyValuePair<Tool, ToolStripButton> pair in toolButtons) pair.Value.Checked = pair.Key == t;
             if (IsDrawingTool(t) && settings.LastTool != t.ToString()) {
@@ -1110,7 +1112,7 @@ namespace Trazo {
         private void DrawHandles(Graphics g, IEnumerable<Point> points) {
             int size = HandleSize;
             using var fill = new SolidBrush(Color.White);
-            using var edge = new Pen(Accent, 1);
+            using var edge = new Pen(Color.Black, 1);
             foreach (Point p in points) {
                 var r = new Rectangle(p.X - size / 2, p.Y - size / 2, size, size);
                 g.FillRectangle(fill, r);
