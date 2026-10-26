@@ -445,7 +445,8 @@ namespace Trazo {
 
         private Cursor ToolCursor => phase == Phase.Selecting ? crossCursor.Cursor : tool switch {
             Tool.Text => Cursors.IBeam,
-            _ => crossCursor.Cursor,
+            // Elegida la zona, la cruz deja paso al cursor normal del usuario
+            _ => Cursors.Default,
         };
 
         private void PositionToolbar() {
