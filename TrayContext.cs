@@ -30,7 +30,6 @@ namespace Trazo {
             if (!settings.StartWithWindows) Autostart.Set(false);
 
             var menu = new ContextMenuStrip();
-            menu.Items.Add("Capturar", null, (_, _) => StartCapture());
             menu.Items.Add("Configuración…", null, (_, _) => OpenSettings());
             updateItem = (ToolStripMenuItem)menu.Items.Add("Buscar actualizaciones…", null, (_, _) => CheckForUpdates());
             menu.Items.Add(new ToolStripSeparator());
@@ -41,8 +40,8 @@ namespace Trazo {
                 ContextMenuStrip = menu,
                 Visible = true,
             };
-            trayIcon.MouseClick += (_, e) => {
-                if (e.Button == MouseButtons.Left) StartCapture();
+            trayIcon.MouseDoubleClick += (_, e) => {
+                if (e.Button == MouseButtons.Left) OpenSettings();
             };
             trayIcon.BalloonTipClicked += (_, _) => OpenSettings();
             // Llega en este hilo (el del menú ya creado) al cambiar el tema de Windows
@@ -60,7 +59,7 @@ namespace Trazo {
                     settings.Save();
                 }
             } else {
-                trayIcon.Text = "Trazo (clic para capturar)";
+                trayIcon.Text = "Trazo (atajo no disponible)";
                 trayIcon.ShowBalloonTip(5000, "Trazo",
                     $"El atajo {name} lo está usando otra aplicación. Haz clic aquí para elegir otro.", ToolTipIcon.Warning);
             }
@@ -139,15 +138,20 @@ namespace Trazo {
 
             // Se libera el atajo mientras se elige otro, para poder pulsarlo en el cuadro
             hotkeys.Unregister();
-            using (settingsForm = new SettingsForm(settings.Hotkey, Autostart.IsEnabled, icon, hotkeys.Register)) {
+            using (settingsForm = new SettingsForm(settings.Hotkey, Autostart.IsEnabled, settings, icon, hotkeys.Register)) {
                 if (settingsForm.ShowDialog() == DialogResult.OK) {
                     settings.Hotkey = settingsForm.Hotkey;
                     settings.StartWithWindows = settingsForm.StartWithWindows;
+                    settings.RoundCorners = settingsForm.RoundCorners;
+                    settings.CornerRadius = settingsForm.CornerRadius;
+                    settings.AddBorder = settingsForm.AddBorder;
+                    settings.BorderColorValue = settingsForm.BorderColor;
+                    settings.BorderWidth = settingsForm.BorderWidth;
                     Autostart.Set(settings.StartWithWindows);
                     settings.Save();
                     UpdateTrayText();
                 } else if (!hotkeys.Register(settings.Hotkey)) {
-                    trayIcon.Text = "Trazo (clic para capturar)";
+                    trayIcon.Text = "Trazo (atajo no disponible)";
                 }
             }
             settingsForm = null;

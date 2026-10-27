@@ -30,8 +30,22 @@ namespace Trazo {
         /// <summary>Tamaño del texto en píxeles.</summary>
         [DataMember] public float TextSize { get; set; }
 
-        /// <summary>Última herramienta de dibujo elegida (Arrow, Rectangle, Ellipse o Text).</summary>
+        /// <summary>Última herramienta de dibujo elegida (Arrow, Line, Rectangle, Ellipse o Text).</summary>
         [DataMember] public string LastTool { get; set; } = "";
+
+        // Aspecto de la imagen copiada o guardada
+
+        [DataMember] public bool RoundCorners { get; set; }
+
+        /// <summary>Radio de las esquinas en píxeles de la captura.</summary>
+        [DataMember] public int CornerRadius { get; set; }
+
+        [DataMember] public bool AddBorder { get; set; }
+
+        [DataMember] public string BorderColor { get; set; } = "";
+
+        /// <summary>Grosor del borde en píxeles de la captura.</summary>
+        [DataMember] public int BorderWidth { get; set; }
 
         public AppSettings() => SetDefaults();
 
@@ -49,6 +63,16 @@ namespace Trazo {
             TextFont = TextShape.DefaultFontFamily;
             TextSize = 24;
             LastTool = "Arrow";
+            RoundCorners = false;
+            CornerRadius = 12;
+            AddBorder = false;
+            BorderColor = "#C8C8C8";
+            BorderWidth = 3;
+        }
+
+        public Color BorderColorValue {
+            get => ParseColor(BorderColor) ?? Color.FromArgb(200, 200, 200);
+            set => BorderColor = ToHex(value);
         }
 
         public Color StrokeColorValue {

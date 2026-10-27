@@ -11,7 +11,7 @@ namespace Trazo {
     internal sealed class CaptureOverlay : Form {
 
         private enum Phase { Selecting, Editing }
-        private enum Tool { Arrow, Rectangle, Ellipse, Text, Picker }
+        private enum Tool { Arrow, Line, Rectangle, Ellipse, Text, Pixelate, Picker }
 
         /// <summary>Lados de la zona que se arrastran al redimensionarla (dos a la vez en las esquinas).</summary>
         [Flags]
@@ -23,6 +23,8 @@ namespace Trazo {
         private static readonly Color Accent = Color.FromArgb(0, 150, 255);
         /// <summary>Gris del borde de la barra de herramientas; también el del recuadro de selección.</summary>
         private static readonly Color EdgeGray = Color.FromArgb(85, 85, 90);
+        /// <summary>Borde fino de la barra de herramientas y la lupa.</summary>
+        private static readonly Color GlassEdge = Color.FromArgb(70, 255, 255, 255);
         private static readonly Color CardBack = Color.FromArgb(235, 28, 28, 30);
         private static readonly float[] Widths = { 2, 3, 5, 8 };
 
@@ -83,6 +85,7 @@ namespace Trazo {
         private Color? statusSwatch;
         private Rectangle statusRect;
         private readonly System.Windows.Forms.Timer statusTimer = new() { Interval = 2500 };
+        private readonly System.Windows.Forms.Timer fadeTimer = new() { Interval = 10 };
 
         private string? ocrText;
         private Rectangle ocrRect;
@@ -98,6 +101,7 @@ namespace Trazo {
         private ToolStripDropDownButton fontButton = null!;
         private ToolStripDropDownButton sizeButton = null!;
         private Bitmap? toolbarBackdrop;
+        private Bitmap? magnifierCard;
         private readonly List<Font> previewFonts = new();
         private readonly int iconSize;
         private readonly Font uiFont;
@@ -131,6 +135,7 @@ namespace Trazo {
             Bounds = virtualBounds;
             ShowInTaskbar = false;
             TopMost = true;
+            Opacity = 0;
             KeyPreview = true;
             crossCursor = new CrossCursor(scale);
             Cursor = crossCursor.Cursor;
@@ -155,6 +160,24 @@ namespace Trazo {
             base.OnShown(e);
             Bounds = virtualBounds;
             Activate();
+            FadeIn();
+        }
+
+        private const int FadeInMs = 300;
+
+        /// <summary>
+        /// La pantalla se va oscureciendo al abrir. Como la captura coincide con lo que ya se ve,
+        /// basta con subir la opacidad de la ventana.
+        /// </summary>
+        private void FadeIn() {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            fadeTimer.Tick += (_, _) => {
+                double t = Math.Min(1, clock.Elapsed.TotalMilliseconds / FadeInMs);
+                // Al llegar a 1 WinForms quita el estilo de ventana con capas y se vuelve a pintar sin coste extra
+                Opacity = 1 - Math.Pow(1 - t, 3);
+                if (t >= 1) fadeTimer.Stop();
+            };
+            fadeTimer.Start();
         }
 
         protected override void WndProc(ref Message m) {
@@ -167,9 +190,11 @@ namespace Trazo {
             if (disposing) {
                 statusTimer.Dispose();
                 caretTimer.Dispose();
+                fadeTimer.Dispose();
                 screenshot.Dispose();
                 dimmed.Dispose();
                 toolbarBackdrop?.Dispose();
+                magnifierCard?.Dispose();
                 foreach (Font f in previewFonts) f.Dispose();
                 foreach (ToolStripItem item in toolbar.Items) {
                     item.Image?.Dispose();
@@ -248,6 +273,7 @@ namespace Trazo {
             AddTool(Tool.Rectangle, IconKind.Rectangle, "Rectángulo (R)\nMayús: cuadrado");
             AddTool(Tool.Ellipse, IconKind.Ellipse, "Elipse (E)\nMayús: círculo");
             AddTool(Tool.Arrow, IconKind.Arrow, "Flecha (A)\nMayús: horizontal / vertical");
+            AddTool(Tool.Line, IconKind.Line, "Línea (L)\nMayús: horizontal / vertical");
             AddTool(Tool.Text, IconKind.Text, "Texto (T)\nIntro: aceptar · Mayús+Intro: nueva línea\nDoble clic en un texto seleccionado para editarlo");
             strip.Items.Add(new ToolStripSeparator());
 
@@ -318,6 +344,7 @@ namespace Trazo {
             }
             strip.Items.Add(new ToolStripSeparator());
 
+            AddTool(Tool.Pixelate, IconKind.Pixelate, "Pixelar (P)\nOculta lo que hay debajo de la zona");
             AddTool(Tool.Picker, IconKind.Picker, "Cuentagotas (I)\nCopia el color de un píxel");
             IconButton(IconKind.Ocr, "Leer texto (O)\nReconoce el texto de la zona y lo copia", RecognizeText);
             strip.Items.Add(new ToolStripSeparator());
@@ -333,7 +360,7 @@ namespace Trazo {
         }
 
         private void SetFill(Shape s) {
-            if (s is not ArrowShape) s.Fill = fillColor;
+            if (s is not SegmentShape and not PixelateShape) s.Fill = fillColor;
         }
 
         private void SetTextFont(string family) {
@@ -429,8 +456,8 @@ namespace Trazo {
             return dialog.ShowDialog(this) == DialogResult.OK ? dialog.Color : null;
         }
 
-        /// <summary>Herramientas que dibujan; el cuentagotas no se recuerda entre capturas.</summary>
-        private static bool IsDrawingTool(Tool t) => t is Tool.Arrow or Tool.Rectangle or Tool.Ellipse or Tool.Text;
+        /// <summary>Herramientas que se recuerdan entre capturas; el cuentagotas y Pixelar, no.</summary>
+        private static bool IsDrawingTool(Tool t) => t is Tool.Arrow or Tool.Line or Tool.Rectangle or Tool.Ellipse or Tool.Text;
 
         private void SetTool(Tool t) {
             CommitText();
@@ -543,7 +570,7 @@ namespace Trazo {
                     g.Restore(state);
                 }
                 using (var veil = new SolidBrush(Color.FromArgb(205, 18, 18, 20))) g.FillPath(veil, path);
-                using (var edge = new Pen(Color.FromArgb(70, 255, 255, 255), 1f)) g.DrawPath(edge, path);
+                using (var edge = new Pen(GlassEdge, 1f)) g.DrawPath(edge, path);
             }
 
             protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e) {
@@ -637,9 +664,7 @@ namespace Trazo {
                     g.DrawRectangle(dash, selected.Bounds);
                 }
 
-                g.SmoothingMode = SmoothingMode.None;
-                using var border = new Pen(EdgeGray, 1);
-                g.DrawRectangle(border, selection.X, selection.Y, selection.Width - 1, selection.Height - 1);
+                DrawSelectionFrame(g);
 
                 if (phase == Phase.Editing) DrawHandles(g);
                 DrawHandles(g, ShapeHandlePoints(selected));
@@ -651,6 +676,43 @@ namespace Trazo {
             if (status != null) DrawStatus(g);
         }
 
+        /// <summary>Radio de las esquinas de la zona: solo es un detalle visual, la captura sigue siendo rectangular.</summary>
+        private int SelectionRadius => Math.Min((int)Math.Round(4 * scale), Math.Min(selection.Width, selection.Height) / 2);
+
+        /// <summary>Borde redondeado de la zona; fuera de la curva se vuelve a pintar la pantalla oscurecida.</summary>
+        private void DrawSelectionFrame(Graphics g) {
+            int radius = SelectionRadius;
+            using var border = new Pen(EdgeGray, 1);
+            if (radius < 1) {
+                g.SmoothingMode = SmoothingMode.None;
+                g.DrawRectangle(border, selection.X, selection.Y, selection.Width - 1, selection.Height - 1);
+                return;
+            }
+
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using GraphicsPath rounded = RoundedRect(new Rectangle(selection.X, selection.Y, selection.Width - 1, selection.Height - 1), radius);
+            using (var ring = new GraphicsPath(FillMode.Alternate)) {
+                ring.AddRectangle(new RectangleF(selection.X - 0.5f, selection.Y - 0.5f, selection.Width, selection.Height));
+                ring.AddPath(rounded, false);
+
+                int size = radius + 2;
+                var image = new Rectangle(Point.Empty, dimmed.Size);
+                GraphicsState state = g.Save();
+                foreach (Point corner in new[] {
+                    new Point(selection.X - 1, selection.Y - 1), new Point(selection.Right - size + 1, selection.Y - 1),
+                    new Point(selection.X - 1, selection.Bottom - size + 1), new Point(selection.Right - size + 1, selection.Bottom - size + 1) }) {
+                    Rectangle cr = Rectangle.Intersect(new Rectangle(corner, new Size(size, size)), image);
+                    if (cr.IsEmpty) continue;
+                    using var texture = new TextureBrush(dimmed, cr);
+                    texture.TranslateTransform(cr.X, cr.Y);
+                    g.SetClip(cr);
+                    g.FillPath(texture, ring);
+                }
+                g.Restore(state);
+            }
+            g.DrawPath(border, rounded);
+        }
+
         private Rectangle SizeLabelRect(Rectangle sel) {
             Size size = TextRenderer.MeasureText($"{sel.Width} × {sel.Height}", labelFont);
             var r = new Rectangle(sel.X, sel.Y - size.Height - 8, size.Width + 10, size.Height + 4);
@@ -660,8 +722,10 @@ namespace Trazo {
 
         private void DrawSizeLabel(Graphics g) {
             Rectangle r = SizeLabelRect(selection);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
             using var back = new SolidBrush(Color.FromArgb(210, 20, 20, 20));
-            g.FillRectangle(back, r);
+            using GraphicsPath path = RoundedRect(r, Math.Min((int)Math.Round(5 * scale), r.Height / 2));
+            g.FillPath(back, path);
             TextRenderer.DrawText(g, $"{selection.Width} × {selection.Height}", labelFont, r, Color.White,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
@@ -678,27 +742,69 @@ namespace Trazo {
             return r;
         }
 
+        private int MagnifierRadius => (int)Math.Round(8 * scale);
+
         private void DrawMagnifier(Graphics g) {
             if (!ClientRectangle.Contains(mouse)) return;
             Rectangle outer = MagnifierRect(mouse);
             int size = MagnifierSource * MagnifierZoom;
-            var dest = new Rectangle(outer.X + 2, outer.Y + 2, size, size);
+            const int LabelHeight = 22;
+            var card = new Rectangle(outer.X + 2, outer.Y + 2, size, size + LabelHeight);
             var src = new Rectangle(mouse.X - MagnifierSource / 2, mouse.Y - MagnifierSource / 2, MagnifierSource, MagnifierSource);
 
-            g.FillRectangle(Brushes.Black, outer);
-            g.InterpolationMode = InterpolationMode.NearestNeighbor;
+            int radius = MagnifierRadius;
+
+            // Se compone en un mapa de bits y se pinta con un pincel de textura para que las esquinas salgan suavizadas
+            magnifierCard ??= new Bitmap(card.Width, card.Height, PixelFormat.Format32bppPArgb);
+            using (Graphics cg = Graphics.FromImage(magnifierCard)) {
+                cg.Clear(Color.Black);
+                cg.InterpolationMode = InterpolationMode.NearestNeighbor;
+                cg.PixelOffsetMode = PixelOffsetMode.Half;
+                cg.DrawImage(screenshot, new Rectangle(0, 0, size, size), src, GraphicsUnit.Pixel);
+                cg.PixelOffsetMode = PixelOffsetMode.Default;
+
+                var center = new Rectangle(MagnifierSource / 2 * MagnifierZoom, MagnifierSource / 2 * MagnifierZoom,
+                    MagnifierZoom, MagnifierZoom);
+                cg.DrawRectangle(Pens.White, center);
+
+                Color c = PixelAt(mouse);
+                TextRenderer.DrawText(cg, $"#{c.R:X2}{c.G:X2}{c.B:X2}   {mouse.X + virtualBounds.X}, {mouse.Y + virtualBounds.Y}",
+                    labelFont, new Rectangle(0, size, size, LabelHeight), Color.White, Color.Black,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
+
+            using var texture = new TextureBrush(magnifierCard);
+            texture.TranslateTransform(card.X, card.Y);
+            using GraphicsPath path = RoundedRect(card, radius);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
             g.PixelOffsetMode = PixelOffsetMode.Half;
-            g.DrawImage(screenshot, dest, src, GraphicsUnit.Pixel);
+            g.FillPath(texture, path);
             g.PixelOffsetMode = PixelOffsetMode.Default;
 
-            var center = new Rectangle(dest.X + MagnifierSource / 2 * MagnifierZoom, dest.Y + MagnifierSource / 2 * MagnifierZoom,
-                MagnifierZoom, MagnifierZoom);
-            g.DrawRectangle(Pens.White, center);
+            // Borde fino que contrasta con lo que hay debajo: claro sobre zonas oscuras y oscuro sobre zonas claras
+            using GraphicsPath edgePath = RoundedRect(new Rectangle(card.X, card.Y, card.Width - 1, card.Height - 1), radius);
+            using var edge = new Pen(EdgeColorUnder(card), 1f);
+            g.DrawPath(edge, edgePath);
+        }
 
-            Color c = PixelAt(mouse);
-            var label = new Rectangle(dest.X, dest.Bottom, size, 22);
-            TextRenderer.DrawText(g, $"#{c.R:X2}{c.G:X2}{c.B:X2}   {mouse.X + virtualBounds.X}, {mouse.Y + virtualBounds.Y}",
-                labelFont, label, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        /// <summary>
+        /// Color del borde según el brillo medio de lo que se ve bajo la zona: la captura dentro de la selección
+        /// y la pantalla oscurecida fuera de ella.
+        /// </summary>
+        private Color EdgeColorUnder(Rectangle area) {
+            const int Step = 6;
+            double total = 0;
+            int count = 0;
+            for (int y = area.Top; y < area.Bottom; y += Step) {
+                for (int x = area.Left; x < area.Right; x += Step) {
+                    if (x < 0 || y < 0 || x >= screenshot.Width || y >= screenshot.Height) continue;
+                    Color c = (selection.Contains(x, y) ? screenshot : dimmed).GetPixel(x, y);
+                    total += c.R * 0.299 + c.G * 0.587 + c.B * 0.114;
+                    count++;
+                }
+            }
+            double luma = count > 0 ? total / count : 0;
+            return luma > 90 ? Color.FromArgb(150, 0, 0, 0) : GlassEdge;
         }
 
         private Color PixelAt(Point p) =>
@@ -749,9 +855,15 @@ namespace Trazo {
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
 
-        internal static GraphicsPath RoundedRect(Rectangle r, int radius) {
-            int d = radius * 2;
+        internal static GraphicsPath RoundedRect(Rectangle r, int radius) => RoundedRect((RectangleF)r, radius);
+
+        internal static GraphicsPath RoundedRect(RectangleF r, float radius) {
+            float d = radius * 2;
             var path = new GraphicsPath();
+            if (d <= 0) {
+                path.AddRectangle(r);
+                return path;
+            }
             path.AddArc(r.X, r.Y, d, d, 180, 90);
             path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
             path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
@@ -881,6 +993,14 @@ namespace Trazo {
             switch (tool) {
                 case Tool.Arrow:
                     drawing = new ArrowShape { Start = e.Location, End = e.Location, Stroke = strokeColor, Width = strokeWidth };
+                    break;
+
+                case Tool.Line:
+                    drawing = new LineShape { Start = e.Location, End = e.Location, Stroke = strokeColor, Width = strokeWidth };
+                    break;
+
+                case Tool.Pixelate:
+                    drawing = new PixelateShape(screenshot) { Start = e.Location, End = e.Location };
                     break;
 
                 case Tool.Rectangle:
@@ -1041,8 +1161,8 @@ namespace Trazo {
                     case BoxShape box:
                         box.End = shift ? ConstrainSquare(box.Start, e.Location) : e.Location;
                         break;
-                    case ArrowShape arrow:
-                        arrow.End = shift ? ConstrainAxis(arrow.Start, e.Location) : e.Location;
+                    case SegmentShape segment:
+                        segment.End = shift ? ConstrainAxis(segment.Start, e.Location) : e.Location;
                         break;
                 }
                 InvalidateShape(drawing, before);
@@ -1099,7 +1219,7 @@ namespace Trazo {
                 Rectangle b = drawing.Bounds;
                 bool tooSmall = drawing switch {
                     BoxShape box => box.Rect.Width < 3 || box.Rect.Height < 3,
-                    ArrowShape arrow => Distance(arrow.Start, arrow.End) < 5,
+                    SegmentShape segment => Distance(segment.Start, segment.End) < 5,
                     _ => false,
                 };
                 if (!tooSmall) {
@@ -1165,13 +1285,14 @@ namespace Trazo {
         private void DrawHandles(Graphics g) => DrawHandles(g, HandlePoints(selection).Select(h => h.point));
 
         private void DrawHandles(Graphics g, IEnumerable<Point> points) {
-            int size = HandleSize;
+            float size = HandleSize + 1;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
             using var fill = new SolidBrush(Color.White);
-            using var edge = new Pen(Color.Black, 1);
+            using var edge = new Pen(Color.FromArgb(160, 0, 0, 0), 1);
             foreach (Point p in points) {
-                var r = new Rectangle(p.X - size / 2, p.Y - size / 2, size, size);
-                g.FillRectangle(fill, r);
-                g.DrawRectangle(edge, r);
+                var r = new RectangleF(p.X - size / 2, p.Y - size / 2, size, size);
+                g.FillEllipse(fill, r);
+                g.DrawEllipse(edge, r);
             }
         }
 
@@ -1206,7 +1327,7 @@ namespace Trazo {
         /// <summary>Tiradores del elemento seleccionado: los 8 de un rectángulo o elipse, o los dos extremos de una flecha.</summary>
         private IEnumerable<Point> ShapeHandlePoints(Shape? shape) => shape switch {
             BoxShape box => HandlePoints(box.Rect).Select(h => h.point),
-            ArrowShape arrow => new[] { arrow.Start, arrow.End },
+            SegmentShape segment => new[] { segment.Start, segment.End },
             _ => Enumerable.Empty<Point>(),
         };
 
@@ -1222,16 +1343,16 @@ namespace Trazo {
                         if (OnHandle(p, point)) return edge;
                     }
                     break;
-                case ArrowShape arrow:
+                case SegmentShape segment:
                     // La punta primero: si los extremos están muy juntos, suele ser la que se quiere mover
-                    if (OnHandle(p, arrow.End)) return Edge.Right;
-                    if (OnHandle(p, arrow.Start)) return Edge.Left;
+                    if (OnHandle(p, segment.End)) return Edge.Right;
+                    if (OnHandle(p, segment.Start)) return Edge.Left;
                     break;
             }
             return Edge.None;
         }
 
-        private Cursor ShapeHandleCursor(Edge edge) => selected is ArrowShape ? Cursors.SizeAll : EdgeCursor(edge);
+        private Cursor ShapeHandleCursor(Edge edge) => selected is SegmentShape ? Cursors.SizeAll : EdgeCursor(edge);
 
         private void StartShapeResize(Edge edge, Point p) {
             PushUndo();
@@ -1259,9 +1380,9 @@ namespace Trazo {
                     box.End = new Point(right, bottom);
                     break;
                 }
-                case ArrowShape arrow:
-                    if (shapeResize == Edge.Right) arrow.End = shift ? ConstrainAxis(arrow.Start, p) : p;
-                    else arrow.Start = shift ? ConstrainAxis(arrow.End, p) : p;
+                case SegmentShape segment:
+                    if (shapeResize == Edge.Right) segment.End = shift ? ConstrainAxis(segment.Start, p) : p;
+                    else segment.Start = shift ? ConstrainAxis(segment.End, p) : p;
                     break;
             }
             movedSinceDown = true;
@@ -1277,7 +1398,7 @@ namespace Trazo {
             // Una figura que se ha quedado sin tamaño se deshace, igual que al dibujarla
             bool tooSmall = selected switch {
                 BoxShape box => box.Rect.Width < 3 || box.Rect.Height < 3,
-                ArrowShape arrow => Distance(arrow.Start, arrow.End) < 5,
+                SegmentShape segment => Distance(segment.Start, segment.End) < 5,
                 _ => false,
             };
             if (tooSmall) Undo();
@@ -1491,11 +1612,62 @@ namespace Trazo {
             return bmp;
         }
 
+        /// <summary>La imagen que se copia o guarda: con las anotaciones y, si se han configurado, esquinas redondeadas y borde.</summary>
+        private Bitmap RenderOutput() {
+            Bitmap image = RenderSelection(withShapes: true);
+            int w = image.Width, h = image.Height;
+            float radius = settings.RoundCorners ? Math.Min(settings.CornerRadius, Math.Min(w, h) / 2f) : 0;
+            float border = settings.AddBorder ? Math.Min(settings.BorderWidth, Math.Min(w, h) / 2f) : 0;
+            if (radius <= 0 && border <= 0) return image;
+
+            var result = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+            using (image)
+            using (var g = Graphics.FromImage(result))
+            using (var texture = new TextureBrush(image)) {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                // Con medio píxel de desplazamiento el contorno coincide con los bordes de la imagen
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                using (GraphicsPath shape = RoundedRect(new RectangleF(0, 0, w, h), radius)) {
+                    g.FillPath(texture, shape);
+                }
+                if (border > 0) {
+                    // Por dentro de la imagen, siguiendo la curva de las esquinas
+                    float inset = border / 2;
+                    using GraphicsPath line = RoundedRect(new RectangleF(inset, inset, w - border, h - border), Math.Max(0, radius - inset));
+                    using var pen = new Pen(settings.BorderColorValue, border);
+                    g.DrawPath(pen, line);
+                }
+            }
+            return result;
+        }
+
+        /// <summary>Formatos sin transparencia (JPEG, BMP y la imagen normal del portapapeles): las esquinas, en blanco.</summary>
+        private static Bitmap Flatten(Bitmap image) {
+            var bmp = new Bitmap(image.Width, image.Height, PixelFormat.Format24bppRgb);
+            using var g = Graphics.FromImage(bmp);
+            g.Clear(Color.White);
+            g.DrawImage(image, new Rectangle(0, 0, image.Width, image.Height));
+            return bmp;
+        }
+
+        private bool HasTransparentCorners => settings.RoundCorners && settings.CornerRadius > 0;
+
         private void CopyAndClose() {
             if (phase != Phase.Editing) return;
             CommitText();
-            using Bitmap bmp = RenderSelection(withShapes: true);
-            Clipboard.SetImage(bmp);
+            using Bitmap bmp = RenderOutput();
+            if (HasTransparentCorners) {
+                // PNG para las aplicaciones que respetan la transparencia y una copia con fondo blanco para el resto
+                using var png = new MemoryStream();
+                bmp.Save(png, ImageFormat.Png);
+                using Bitmap flat = Flatten(bmp);
+                var data = new DataObject();
+                data.SetData("PNG", false, png);
+                data.SetImage(flat);
+                Clipboard.SetDataObject(data, copy: true);
+            } else {
+                Clipboard.SetImage(bmp);
+            }
             Close();
         }
 
@@ -1516,8 +1688,13 @@ namespace Trazo {
                 ".bmp" => ImageFormat.Bmp,
                 _ => ImageFormat.Png,
             };
-            using Bitmap bmp = RenderSelection(withShapes: true);
-            bmp.Save(dialog.FileName, format);
+            using Bitmap bmp = RenderOutput();
+            if (format.Equals(ImageFormat.Png) || !HasTransparentCorners) {
+                bmp.Save(dialog.FileName, format);
+            } else {
+                using Bitmap flat = Flatten(bmp);
+                flat.Save(dialog.FileName, format);
+            }
             Close();
         }
 
@@ -1600,6 +1777,8 @@ namespace Trazo {
                     DeleteSelected();
                     return true;
                 case Keys.A: SetTool(Tool.Arrow); return true;
+                case Keys.L: SetTool(Tool.Line); return true;
+                case Keys.P: SetTool(Tool.Pixelate); return true;
                 case Keys.R: SetTool(Tool.Rectangle); return true;
                 case Keys.E: SetTool(Tool.Ellipse); return true;
                 case Keys.T: SetTool(Tool.Text); return true;

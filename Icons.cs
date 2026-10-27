@@ -2,7 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace Trazo {
 
-    internal enum IconKind { Arrow, Rectangle, Ellipse, Text, Picker, Undo, Ocr, Copy, Save, Close }
+    internal enum IconKind { Arrow, Line, Rectangle, Ellipse, Text, Pixelate, Picker, Undo, Ocr, Copy, Save, Close }
 
     /// <summary>
     /// Iconos de la barra dibujados por código: nítidos a cualquier escala y sin archivos de recursos.
@@ -36,6 +36,21 @@ namespace Trazo {
                     case IconKind.Arrow:
                         g.DrawLine(pen, 5, 19, 15, 9);
                         g.FillPolygon(brush, new PointF[] { new(19.5f, 4.5f), new(10.5f, 7), new(17, 13.5f) });
+                        break;
+
+                    case IconKind.Line:
+                        g.DrawLine(pen, 5, 19, 19, 5);
+                        break;
+
+                    case IconKind.Pixelate:
+                        // Cuadrícula de bloques con distintas intensidades
+                        for (int row = 0; row < 3; row++) {
+                            for (int col = 0; col < 3; col++) {
+                                int alpha = (row + col) % 2 == 0 ? 255 : 110;
+                                using var block = new SolidBrush(Color.FromArgb(alpha * ink.A / 255, ink));
+                                g.FillRectangle(block, 4 + col * 5.5f, 4 + row * 5.5f, 5, 5);
+                            }
+                        }
                         break;
 
                     case IconKind.Rectangle:

@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 
 namespace Trazo {
 
@@ -82,10 +83,36 @@ namespace Trazo {
         protected override void AddToPath(GraphicsPath path, Rectangle r) => path.AddEllipse(r);
     }
 
-    internal sealed class ArrowShape : Shape {
+    /// <summary>Figura definida por dos extremos (flecha, línea).</summary>
+    internal abstract class SegmentShape : Shape {
 
         public Point Start { get; set; }
         public Point End { get; set; }
+
+        public override Rectangle Bounds => Padded(Normalize(Start, End));
+
+        public override void Offset(int dx, int dy) {
+            Start = new Point(Start.X + dx, Start.Y + dy);
+            End = new Point(End.X + dx, End.Y + dy);
+        }
+
+        public override bool HitTest(Point p) {
+            using var path = new GraphicsPath();
+            path.AddLine(Start, End);
+            using var pen = new Pen(Color.Black, Width + HitTolerance * 2);
+            return path.IsOutlineVisible(p, pen);
+        }
+    }
+
+    internal sealed class LineShape : SegmentShape {
+        public override void Draw(Graphics g) {
+            if (Start == End) return;
+            using var pen = CreatePen();
+            g.DrawLine(pen, Start, End);
+        }
+    }
+
+    internal sealed class ArrowShape : SegmentShape {
 
         private float HeadLength => Math.Max(12, Width * 4);
 
@@ -96,11 +123,6 @@ namespace Trazo {
                 r.Inflate(pad, pad);
                 return r;
             }
-        }
-
-        public override void Offset(int dx, int dy) {
-            Start = new Point(Start.X + dx, Start.Y + dy);
-            End = new Point(End.X + dx, End.Y + dy);
         }
 
         public override void Draw(Graphics g) {
@@ -126,12 +148,65 @@ namespace Trazo {
             using var brush = new SolidBrush(Stroke);
             g.FillPolygon(brush, tip);
         }
+    }
 
-        public override bool HitTest(Point p) {
-            using var path = new GraphicsPath();
-            path.AddLine(Start, End);
-            using var pen = new Pen(Color.Black, Width + HitTolerance * 2);
-            return path.IsOutlineVisible(p, pen);
+    /// <summary>
+    /// Zona de la captura pixelada para ocultar lo que hay debajo. Trabaja sobre la captura original:
+    /// lo dibujado antes queda tapado y lo dibujado después, encima.
+    /// </summary>
+    internal sealed class PixelateShape : BoxShape {
+
+        /// <summary>Lado de cada bloque, en píxeles de la captura.</summary>
+        private const int BlockSize = 12;
+
+        public PixelateShape(Bitmap source) => this.source = source;
+
+        private readonly Bitmap source;
+
+        // El resultado se reutiliza mientras no cambie la zona (se repinta a menudo).
+        // No se libera al sustituirlo: las copias para deshacer pueden seguir usándolo.
+        private Bitmap? cache;
+        private Rectangle cacheRect;
+
+        protected override void AddToPath(GraphicsPath path, Rectangle r) => path.AddRectangle(r);
+
+        public override void Draw(Graphics g) {
+            Rectangle r = Rectangle.Intersect(Rect, new Rectangle(Point.Empty, source.Size));
+            if (r.Width < 1 || r.Height < 1) return;
+            if (cache == null || cacheRect != r) {
+                cache = Pixelate(r);
+                cacheRect = r;
+            }
+            GraphicsState state = g.Save();
+            g.CompositingMode = CompositingMode.SourceCopy;
+            g.InterpolationMode = InterpolationMode.NearestNeighbor;
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+            g.DrawImage(cache, r, new Rectangle(Point.Empty, cache.Size), GraphicsUnit.Pixel);
+            g.Restore(state);
+        }
+
+        public override bool HitTest(Point p) => Rect.Contains(p);
+
+        /// <summary>Color medio de cada bloque (reducción de calidad alta) ampliado sin suavizar.</summary>
+        private Bitmap Pixelate(Rectangle r) {
+            int w = (r.Width + BlockSize - 1) / BlockSize, h = (r.Height + BlockSize - 1) / BlockSize;
+            using var small = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(small))
+            using (var attrs = new ImageAttributes()) {
+                // Sin esto, los bordes se mezclan con el exterior transparente y salen oscuros
+                attrs.SetWrapMode(WrapMode.TileFlipXY);
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.DrawImage(source, new Rectangle(0, 0, w, h), r.X, r.Y, r.Width, r.Height, GraphicsUnit.Pixel, attrs);
+            }
+
+            var result = new Bitmap(r.Width, r.Height, PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(result)) {
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                g.DrawImage(small, new Rectangle(0, 0, w * BlockSize, h * BlockSize), new Rectangle(0, 0, w, h), GraphicsUnit.Pixel);
+            }
+            return result;
         }
     }
 

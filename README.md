@@ -13,12 +13,14 @@
 
 ## Características
 
-- **Captura con un atajo** (por defecto <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd>) o con un clic en el icono de la bandeja. Funciona con varios monitores.
-- **Anotaciones** sobre la zona elegida: flechas, rectángulos, elipses y texto, con color de borde, relleno, grosor, fuente y tamaño.
+- **Captura con un atajo** (por defecto <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd>). Funciona con varios monitores. Doble clic en el icono de la bandeja para abrir la configuración.
+- **Anotaciones** sobre la zona elegida: flechas, líneas, rectángulos, elipses y texto, con color de borde, relleno, grosor, fuente y tamaño.
+- **Pixelar** una parte de la captura para ocultar datos.
 - **Reconocimiento de texto (OCR)**: lee el texto de la zona y lo copia al portapapeles, con el motor de OCR que incluye Windows.
 - **Cuentagotas**: copia el color de cualquier píxel en formato `#RRGGBB`.
 - **Copiar o guardar** la captura con un solo atajo.
 - **Redimensionar la zona** después de elegirla, arrastrando sus bordes o tiradores.
+- **Esquinas redondeadas y borde** opcionales en la imagen copiada o guardada (tres tamaños de cada uno y el color del borde), desde la configuración.
 - Recuerda la última herramienta y el último estilo usados, y permite cambiar el atajo e iniciar con Windows desde su configuración.
 - El icono de la bandeja se adapta a la barra de tareas clara u oscura.
 
@@ -27,7 +29,8 @@
 | Acción | Atajo |
 |---|---|
 | Hacer una captura | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd> (configurable) |
-| Flecha · Rectángulo · Elipse · Texto | <kbd>A</kbd> · <kbd>R</kbd> · <kbd>E</kbd> · <kbd>T</kbd> |
+| Flecha · Línea · Rectángulo · Elipse · Texto | <kbd>A</kbd> · <kbd>L</kbd> · <kbd>R</kbd> · <kbd>E</kbd> · <kbd>T</kbd> |
+| Pixelar | <kbd>P</kbd> |
 | Cuentagotas | <kbd>I</kbd> |
 | Leer texto (OCR) | <kbd>O</kbd> |
 | Cambiar el grosor (o el tamaño del texto, con la herramienta Texto o un texto seleccionado) | <kbd>Ctrl</kbd>+rueda del ratón |
@@ -38,9 +41,9 @@
 | Guardar como imagen | <kbd>Ctrl</kbd>+<kbd>S</kbd> |
 | Cerrar sin guardar | <kbd>Esc</kbd> |
 
-Con <kbd>Mayús</kbd> las flechas quedan horizontales o verticales, los rectángulos cuadrados y las elipses círculos.
+Con <kbd>Mayús</kbd> las flechas y líneas quedan horizontales o verticales, los rectángulos cuadrados y las elipses círculos.
 
-Para mover un elemento, haz doble clic sobre él para seleccionarlo y arrástralo (o mantén pulsado el segundo clic y arrastra). Un rectángulo o elipse seleccionado muestra 8 tiradores y una flecha uno en cada extremo: arrástralos para cambiar su tamaño o dirección. Doble clic en un texto ya seleccionado para editarlo.
+Para mover un elemento, haz doble clic sobre él para seleccionarlo y arrástralo (o mantén pulsado el segundo clic y arrastra). Un rectángulo, elipse o zona pixelada seleccionada muestra 8 tiradores, y una flecha o línea uno en cada extremo: arrástralos para cambiar su tamaño o dirección. Doble clic en un texto ya seleccionado para editarlo.
 
 ## Instalación
 

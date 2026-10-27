@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Drawing.Drawing2D;
 
 namespace Trazo {
 
@@ -7,12 +8,22 @@ namespace Trazo {
         private readonly Func<Keys, bool> tryApply;
         private readonly HotkeyBox hotkeyBox;
         private readonly CheckBox startupCheck;
+        private readonly OptionPicker radiusPicker;
+        private readonly ToolTip colorTip = new();
+        private readonly Button borderColorButton;
+        private readonly OptionPicker borderWidthPicker;
 
         public Keys Hotkey => hotkeyBox.Hotkey;
         public bool StartWithWindows => startupCheck.Checked;
+        public bool RoundCorners => radiusPicker.Value > 0;
+        public int CornerRadius => radiusPicker.Value;
+        public bool AddBorder => borderWidthPicker.Value > 0;
+        public Color BorderColor => borderColorButton.BackColor;
+        public int BorderWidth => borderWidthPicker.Value;
 
         /// <param name="tryApply">Intenta registrar el atajo; devuelve false si está ocupado.</param>
-        public SettingsForm(Keys current, bool startWithWindows, Icon icon, Func<Keys, bool> tryApply) {
+        /// <param name="output">Opciones actuales del aspecto de la captura (solo se leen).</param>
+        public SettingsForm(Keys current, bool startWithWindows, AppSettings output, Icon icon, Func<Keys, bool> tryApply) {
             this.tryApply = tryApply;
 
             Text = "Configuración de Trazo";
@@ -76,7 +87,12 @@ namespace Trazo {
                 Margin = new Padding(0, 0, 0, 6),
             };
 
-            hotkeyBox = new HotkeyBox(current) { Width = 320, Margin = new Padding(0, 0, 0, 4) };
+            hotkeyBox = new HotkeyBox(current) {
+                Width = 320,
+                // Ocupa todo el ancho de la ventana
+                Anchor = AnchorStyles.Left | AnchorStyles.Right,
+                Margin = new Padding(0, 0, 0, 4),
+            };
 
             var hint = new Label {
                 Text = "Haz clic en el cuadro y pulsa la combinación que quieras.\n" +
@@ -108,6 +124,71 @@ namespace Trazo {
                 Margin = new Padding(0, 0, 0, 16),
             };
 
+            // Aspecto de la imagen copiada o guardada
+            var outputTitle = new Label {
+                Text = "Aspecto de la captura",
+                Font = new Font("Segoe UI Semibold", 10f),
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, 6),
+            };
+
+            // Cuatro opciones con icono en cada grupo; la primera lo desactiva
+            int optionSize = LogicalToDeviceUnits(32);
+            var cornersCaption = new Label { Text = "Esquinas", AutoSize = true, Margin = new Padding(0, 0, 0, 4) };
+            radiusPicker = new OptionPicker(CornerRadii, output.RoundCorners ? output.CornerRadius : 0,
+                new[] { "Sin redondear", "Suaves", "Medias", "Muy redondeadas" }, DrawCornerIcon, optionSize) {
+                Margin = Padding.Empty,
+            };
+
+            var borderCaption = new Label { Text = "Borde", AutoSize = true, Margin = new Padding(0, 0, 0, 4) };
+            borderWidthPicker = new OptionPicker(BorderWidths, output.AddBorder ? output.BorderWidth : 0,
+                new[] { "Sin borde", "Fino", "Medio", "Grueso" }, DrawBorderIcon, optionSize) {
+                Margin = new Padding(0, 0, 6, 0),
+            };
+            int swatch = LogicalToDeviceUnits(22);
+            borderColorButton = new Button {
+                BackColor = output.BorderColorValue,
+                FlatStyle = FlatStyle.Flat,
+                Size = new Size(swatch, swatch),
+                Margin = new Padding(0, (optionSize - swatch) / 2, 0, 0),
+                Cursor = Cursors.Hand,
+            };
+            borderColorButton.FlatAppearance.BorderColor = SystemColors.ControlDark;
+            colorTip.SetToolTip(borderColorButton, "Color del borde");
+            borderColorButton.Click += (_, _) => {
+                using var dialog = new ColorDialog { Color = borderColorButton.BackColor, FullOpen = true, AnyColor = true };
+                if (dialog.ShowDialog(this) == DialogResult.OK) borderColorButton.BackColor = dialog.Color;
+            };
+            var borderRow = new FlowLayoutPanel {
+                AutoSize = true,
+                WrapContents = false,
+                Margin = Padding.Empty,
+            };
+            borderRow.Controls.AddRange(new Control[] { borderWidthPicker, borderColorButton });
+
+            // Los dos grupos uno al lado del otro para que la ventana quede compacta
+            FlowLayoutPanel Group(Control caption, Control options, Padding margin) {
+                var group = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false, Margin = margin };
+                group.Controls.Add(caption);
+                group.Controls.Add(options);
+                return group;
+            }
+            var outputOptions = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+            outputOptions.Controls.Add(Group(cornersCaption, radiusPicker, new Padding(0, 0, LogicalToDeviceUnits(24), 0)));
+            outputOptions.Controls.Add(Group(borderCaption, borderRow, Padding.Empty));
+
+            var outputHint = new Label {
+                Text = "Se aplica al copiar y al guardar. Las esquinas redondeadas\n" +
+                       "son transparentes en PNG y blancas en JPEG y BMP.",
+                AutoSize = true,
+                ForeColor = SystemColors.GrayText,
+                Margin = new Padding(0, 8, 0, 16),
+            };
+
+            // El color solo tiene sentido con borde
+            borderColorButton.Enabled = borderWidthPicker.Value > 0;
+            borderWidthPicker.ValueChanged += (_, _) => borderColorButton.Enabled = borderWidthPicker.Value > 0;
+
             var save = new Button { Text = "Guardar", AutoSize = true, DialogResult = DialogResult.None };
             var cancel = new Button { Text = "Cancelar", AutoSize = true, DialogResult = DialogResult.Cancel };
             save.Click += (_, _) => Save();
@@ -128,11 +209,107 @@ namespace Trazo {
             layout.Controls.Add(printScreenNote);
             layout.Controls.Add(settingsLink);
             layout.Controls.Add(startupCheck);
+            layout.Controls.Add(outputTitle);
+            layout.Controls.Add(outputOptions);
+            layout.Controls.Add(outputHint);
             layout.Controls.Add(buttons);
             Controls.Add(layout);
 
             AcceptButton = save;
             CancelButton = cancel;
+        }
+
+        /// <summary>Opciones de radio de las esquinas y de grosor del borde, en píxeles de la captura (0 = sin ellos).</summary>
+        public static readonly int[] CornerRadii = { 0, 6, 12, 24 };
+        public static readonly int[] BorderWidths = { 0, 1, 3, 6 };
+
+        /// <summary>Esquina superior izquierda de una tarjeta: en ángulo recto (sin redondear) o cada vez más curva.</summary>
+        private static void DrawCornerIcon(Graphics g, int index, Color ink) {
+            float r = new[] { 0f, 3f, 7f, 13f }[index];
+            using var pen = new Pen(ink, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Miter };
+            using var path = new GraphicsPath();
+            path.AddLine(5, 21, 5, 5 + r);
+            if (r > 0) path.AddArc(5, 5, r * 2, r * 2, 180, 90);
+            path.AddLine(5 + r, 5, 21, 5);
+            g.DrawPath(pen, path);
+        }
+
+        /// <summary>Marco cuadrado con el grosor de la opción; sin borde, un marco tenue tachado.</summary>
+        private static void DrawBorderIcon(Graphics g, int index, Color ink) {
+            if (index == 0) {
+                using var faint = new Pen(Color.FromArgb(150, 150, 150), 1f) { DashStyle = DashStyle.Dash };
+                g.DrawRectangle(faint, 5.5f, 5.5f, 13, 13);
+                using var slash = new Pen(Color.FromArgb(220, 40, 40), 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+                g.DrawLine(slash, 4, 20, 20, 4);
+                return;
+            }
+            float w = new[] { 0f, 1f, 2.5f, 4.5f }[index];
+            using var pen = new Pen(ink, w);
+            g.DrawRectangle(pen, 5 + w / 2, 5 + w / 2, 14 - w, 14 - w);
+        }
+
+        /// <summary>Botones con icono de los que solo uno queda marcado.</summary>
+        private sealed class OptionPicker : FlowLayoutPanel {
+
+            private readonly int[] values;
+            private readonly RadioButton[] buttons;
+            private readonly ToolTip tips = new();
+
+            public int Value => values[Array.FindIndex(buttons, b => b.Checked) is var i and >= 0 ? i : 0];
+
+            public event EventHandler? ValueChanged;
+
+            public OptionPicker(int[] values, int current, string[] names, Action<Graphics, int, Color> drawIcon, int size) {
+                this.values = values;
+                AutoSize = true;
+                WrapContents = false;
+                Padding = Padding.Empty;
+
+                // La opción guardada o, si no coincide con ninguna, la más cercana
+                int selected = Enumerable.Range(0, values.Length).OrderBy(i => Math.Abs(values[i] - current)).First();
+                buttons = new RadioButton[values.Length];
+                for (int i = 0; i < values.Length; i++) {
+                    var b = new RadioButton {
+                        Appearance = Appearance.Button,
+                        FlatStyle = FlatStyle.Flat,
+                        Size = new Size(size, size),
+                        Margin = new Padding(0, 0, 4, 0),
+                        Image = CreateIcon(drawIcon, i, size),
+                        Checked = i == selected,
+                        Cursor = Cursors.Hand,
+                    };
+                    b.FlatAppearance.BorderColor = SystemColors.ControlDark;
+                    b.FlatAppearance.CheckedBackColor = Color.FromArgb(204, 228, 247);
+                    b.FlatAppearance.MouseOverBackColor = Color.FromArgb(229, 241, 251);
+                    tips.SetToolTip(b, values[i] > 0 ? $"{names[i]} ({values[i]} px)" : names[i]);
+                    b.CheckedChanged += (_, _) => { if (b.Checked) ValueChanged?.Invoke(this, EventArgs.Empty); };
+                    buttons[i] = b;
+                    Controls.Add(b);
+                }
+            }
+
+            private static Bitmap CreateIcon(Action<Graphics, int, Color> draw, int index, int buttonSize) {
+                int size = buttonSize * 2 / 3;
+                var bmp = new Bitmap(size, size);
+                using var g = Graphics.FromImage(bmp);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.ScaleTransform(size / 24f, size / 24f);
+                draw(g, index, Color.FromArgb(45, 45, 45));
+                return bmp;
+            }
+
+            protected override void Dispose(bool disposing) {
+                if (disposing) {
+                    tips.Dispose();
+                    foreach (RadioButton b in buttons) b.Image?.Dispose();
+                }
+                base.Dispose(disposing);
+            }
+        }
+
+        protected override void Dispose(bool disposing) {
+            if (disposing) colorTip.Dispose();
+            base.Dispose(disposing);
         }
 
         private void Save() {
