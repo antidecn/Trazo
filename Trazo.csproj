@@ -17,7 +17,7 @@
     <PlatformTarget>AnyCPU</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
 
-    <Version>1.4.0</Version>
+    <Version>1.4.1</Version>
     <Product>Trazo</Product>
     <Company>Antidecn</Company>
     <Description>Capturas de pantalla con anotaciones, cuentagotas y OCR</Description>
