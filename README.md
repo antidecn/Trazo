@@ -34,6 +34,8 @@
 | Cuentagotas | <kbd>I</kbd> |
 | Leer texto (OCR) | <kbd>O</kbd> |
 | Cambiar el grosor (o el tamaño del texto, con la herramienta Texto o un texto seleccionado) | <kbd>Ctrl</kbd>+rueda del ratón |
+| Mover el elemento seleccionado (4 px) | Flechas |
+| Mover el borde derecho (<kbd>←</kbd>/<kbd>→</kbd>) o inferior (<kbd>↑</kbd>/<kbd>↓</kbd>) del elemento seleccionado (4 px; en un texto, cambia el tamaño de la letra) | <kbd>Mayús</kbd>+flechas |
 | Deshacer | <kbd>Ctrl</kbd>+<kbd>Z</kbd> |
 | Borrar el elemento seleccionado | <kbd>Supr</kbd> |
 | Copiar y cerrar | <kbd>Ctrl</kbd>+<kbd>C</kbd> o <kbd>Intro</kbd> |

@@ -35,6 +35,8 @@ namespace Trazo {
         };
         private static readonly float[] TextSizes = { 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, 72, 96 };
         private const float MinTextSize = 6, MaxTextSize = 300;
+        /// <summary>Píxeles que se mueve el elemento seleccionado, o su borde, con cada pulsación de las flechas.</summary>
+        private const int NudgeStep = 4;
 
         private readonly Bitmap screenshot;
         private readonly Bitmap dimmed;
@@ -65,6 +67,9 @@ namespace Trazo {
         private int wheelDelta;
         private Shape? wheelShape;
         private int wheelUndoDepth = -1;
+        // Flechas: elemento de la última racha de pulsaciones, para deshacerla de una vez
+        private Shape? nudgeShape;
+        private int nudgeUndoDepth = -1;
 
         private readonly AppSettings settings;
         private Color strokeColor;
@@ -1411,6 +1416,91 @@ namespace Trazo {
             _ => Cursors.SizeNESW,
         };
 
+        /// <summary>
+        /// Flechas: mueven el elemento seleccionado <see cref="NudgeStep"/> px.
+        /// Mayús+flechas: mueven el borde derecho (izquierda/derecha) o el inferior (arriba/abajo),
+        /// la misma distancia, dejando quietos el izquierdo y el superior.
+        /// Una racha de pulsaciones sobre el mismo elemento se deshace de una vez.
+        /// </summary>
+        private bool NudgeSelected(Keys keyData) {
+            if (selected == null || moving || drawing != null || shapeResize != Edge.None) return false;
+            Keys key = keyData & Keys.KeyCode, mods = keyData & Keys.Modifiers;
+            if (key is not (Keys.Left or Keys.Right or Keys.Up or Keys.Down)) return false;
+            if (mods is not (Keys.None or Keys.Shift)) return false;
+
+            bool coalesce = selected == nudgeShape && undoStack.Count == nudgeUndoDepth;
+            int depth = undoStack.Count;
+
+            int dx = key == Keys.Left ? -NudgeStep : key == Keys.Right ? NudgeStep : 0;
+            int dy = key == Keys.Up ? -NudgeStep : key == Keys.Down ? NudgeStep : 0;
+            if (mods == Keys.Shift) {
+                ResizeSelected(dx, dy);
+            } else {
+                PushUndo();
+                Rectangle before = selected.Bounds;
+                selected.Offset(dx, dy);
+                InvalidateShape(selected, before);
+            }
+
+            if (coalesce && undoStack.Count > depth) undoStack.Pop();
+            nudgeShape = selected;
+            nudgeUndoDepth = undoStack.Count;
+            return true;
+        }
+
+        /// <summary>
+        /// Mueve el borde derecho <paramref name="dx"/> px y el inferior <paramref name="dy"/> px del elemento seleccionado.
+        /// En flechas y líneas se mueve el extremo que queda más a la derecha o más abajo.
+        /// Un texto no tiene bordes propios: derecha y abajo agrandan la letra, izquierda y arriba la encogen,
+        /// saltando por los mismos tamaños que el desplegable.
+        /// </summary>
+        private void ResizeSelected(int dx, int dy) {
+            if (selected is TextShape text) {
+                float size = StepValue(TextSizes, text.FontSize, dx + dy > 0 ? 1 : -1);
+                SetTextSize(size);
+                ShowStatus($"Tamaño del texto: {size} px");
+                return;
+            }
+
+            Point start, end;
+            switch (selected) {
+                case BoxShape box: {
+                    // Rect está normalizado: Start queda arriba a la izquierda y End abajo a la derecha
+                    Rectangle r = box.Rect;
+                    start = r.Location;
+                    end = new Point(Math.Max(r.Right + dx, r.Left + 3), Math.Max(r.Bottom + dy, r.Top + 3));
+                    if (end == new Point(r.Right, r.Bottom)) return;
+                    break;
+                }
+                case SegmentShape segment: {
+                    (start, end) = (segment.Start, segment.End);
+                    // Al encoger, el extremo que se mueve no pasa por delante del otro
+                    if (dx != 0) {
+                        if (start.X > end.X) start.X = Math.Max(start.X + dx, end.X);
+                        else end.X = Math.Max(end.X + dx, start.X);
+                    }
+                    if (dy != 0) {
+                        if (start.Y > end.Y) start.Y = Math.Max(start.Y + dy, end.Y);
+                        else end.Y = Math.Max(end.Y + dy, start.Y);
+                    }
+                    if ((start == segment.Start && end == segment.End) || Distance(start, end) < 5) return;
+                    break;
+                }
+                default:
+                    return;
+            }
+
+            PushUndo();
+            Rectangle before = selected.Bounds;
+            switch (selected) {
+                case BoxShape box: box.Start = start; box.End = end; break;
+                case SegmentShape segment: segment.Start = start; segment.End = end; break;
+            }
+            InvalidateShape(selected, before);
+            Rectangle area = Normalize(start, end);
+            ShowStatus($"Tamaño: {area.Width} × {area.Height} px");
+        }
+
         private Rectangle Resized(Rectangle r, Edge edge, int dx, int dy) {
             Rectangle bounds = ClientRectangle;
             int left = r.Left, top = r.Top, right = r.Right, bottom = r.Bottom;
@@ -1760,6 +1850,8 @@ namespace Trazo {
             }
 
             if (phase != Phase.Editing) return base.ProcessCmdKey(ref msg, keyData);
+
+            if (NudgeSelected(keyData)) return true;
 
             switch (keyData) {
                 case Keys.Control | Keys.C:
