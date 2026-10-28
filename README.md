@@ -113,6 +113,10 @@ powershell -ExecutionPolicy Bypass -File assets\build-assets.ps1
 | `assets/` | Logo fuente y script que genera iconos e imágenes |
 | `docs/` | Informe de consumo de recursos y logo del README |
 
+## Licencia
+
+Trazo tiene el código visible, pero **no es software libre**. Puedes descargarlo, usarlo, hacer un fork, compilarlo y depurarlo, pero no puedes usarlo con fines comerciales ni distribuirlo con otro nombre o como trabajo propio. Los términos completos están en [LICENSE](LICENSE). Para cualquier otro uso, contacta con el autor.
+
 ## Autor
 
-[Antidecn](https://github.com/antidecn)
+© 2026 [Antidecn](https://github.com/antidecn)

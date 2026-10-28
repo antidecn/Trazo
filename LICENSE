@@ -1,0 +1,135 @@
+Licencia de Trazo (código visible, uso no comercial)
+
+Copyright (c) 2026 Antidecn. Todos los derechos reservados salvo los
+concedidos expresamente en esta licencia.
+
+"El Software" es Trazo: su código fuente, el instalador, los binarios
+publicados, el logo, los iconos y el resto de archivos de este repositorio.
+
+1. Lo que puedes hacer
+
+   Sin coste y sin pedir permiso, puedes:
+
+   a) Ver, leer y descargar el código fuente y los instaladores publicados.
+   b) Instalar y usar el programa Trazo como herramienta, también en el
+      trabajo.
+   c) Hacer un fork del repositorio en GitHub.
+   d) Compilar, ejecutar, depurar y modificar el código en tu equipo para
+      estudiarlo, aprender, encontrar errores o probar cambios.
+   e) Proponer cambios al repositorio original (issues y pull requests).
+
+2. Lo que no puedes hacer
+
+   a) Usar el Software o cualquier parte de su código con fines lucrativos o
+      comerciales. Esto incluye, entre otras cosas: venderlo, cobrar por
+      descargarlo, instalarlo o darle soporte; incluirlo en un producto o
+      servicio de pago; ofrecerlo con publicidad, suscripciones o compras
+      dentro de la aplicación; o usarlo para desarrollar un producto que
+      compita con Trazo.
+   b) Distribuir el Software, o una versión modificada, con otro nombre,
+      otro logo u otro autor, ni presentarlo como trabajo propio.
+   c) Quitar o cambiar este archivo LICENSE, el aviso de copyright o la
+      mención al autor.
+   d) Usar el nombre "Trazo" o su logo para identificar otro producto, o
+      dando a entender que el autor respalda una versión que no es suya.
+
+   Si haces un fork público o compartes una versión modificada, tiene que
+   seguir llamándose Trazo, mencionar al autor original con un enlace a
+   https://github.com/antidecn, incluir esta licencia sin cambios, indicar
+   claramente que es una versión modificada y no puede usarse con fines
+   comerciales.
+
+3. Contribuciones
+
+   Si envías un cambio al repositorio original (por ejemplo, un pull
+   request), autorizas al autor a incluirlo en Trazo y a distribuirlo bajo
+   esta licencia o la que el autor elija en el futuro.
+
+4. Permisos adicionales
+
+   Para cualquier uso que esta licencia no permita, incluido el uso
+   comercial, hace falta el permiso previo y por escrito del autor.
+
+5. Fin de la licencia
+
+   Si incumples esta licencia, pierdes automáticamente los permisos que te
+   concede.
+
+6. Sin garantía
+
+   El Software se ofrece "tal cual", sin garantía de ningún tipo. El autor
+   no responde de ningún daño o perjuicio que pueda causar su uso, en la
+   medida en que la ley lo permita.
+
+7. Idioma
+
+   Abajo hay una traducción al inglés como referencia. Si hay diferencias
+   entre las dos versiones, prevalece la versión en castellano.
+
+------------------------------------------------------------------------------
+
+Trazo License (source-available, non-commercial) - English translation
+
+Copyright (c) 2026 Antidecn. All rights reserved except those expressly
+granted in this license.
+
+"The Software" means Trazo: its source code, installer, published binaries,
+logo, icons and every other file in this repository.
+
+1. What you may do
+
+   Free of charge and without asking for permission, you may:
+
+   a) View, read and download the source code and the published installers.
+   b) Install and use the Trazo program as a tool, including at work.
+   c) Fork the repository on GitHub.
+   d) Build, run, debug and modify the code on your own computer to study
+      it, learn from it, find bugs or test changes.
+   e) Propose changes to the original repository (issues and pull requests).
+
+2. What you may not do
+
+   a) Use the Software, or any part of its code, for profit or commercial
+      purposes. This includes, among other things: selling it; charging for
+      downloading, installing or supporting it; including it in a paid
+      product or service; offering it with ads, subscriptions or in-app
+      purchases; or using it to build a product that competes with Trazo.
+   b) Distribute the Software, or a modified version, under a different
+      name, logo or author, or present it as your own work.
+   c) Remove or change this LICENSE file, the copyright notice or the
+      credit to the author.
+   d) Use the name "Trazo" or its logo to identify another product, or in a
+      way that suggests the author endorses a version that is not theirs.
+
+   If you publish a fork or share a modified version, it must keep the name
+   Trazo, credit the original author with a link to
+   https://github.com/antidecn, include this license unchanged, state
+   clearly that it is a modified version, and it may not be used for
+   commercial purposes.
+
+3. Contributions
+
+   By submitting a change to the original repository (for example, a pull
+   request), you allow the author to include it in Trazo and to distribute
+   it under this license or any license the author chooses in the future.
+
+4. Additional permissions
+
+   Any use not allowed by this license, including commercial use, requires
+   the author's prior written permission.
+
+5. Termination
+
+   If you breach this license, the permissions it grants you end
+   automatically.
+
+6. No warranty
+
+   The Software is provided "as is", without warranty of any kind. To the
+   extent permitted by law, the author is not liable for any damage or loss
+   arising from its use.
+
+7. Language
+
+   This English text is a translation for reference only. If the two
+   versions differ, the Spanish version prevails.
