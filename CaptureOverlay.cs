@@ -1,6 +1,7 @@
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
+using System.Runtime.InteropServices;
 
 namespace Trazo {
 
@@ -72,6 +73,8 @@ namespace Trazo {
         private int nudgeUndoDepth = -1;
 
         private readonly AppSettings settings;
+        /// <summary>El estilo o la herramienta han cambiado: se guarda una sola vez, al cerrar.</summary>
+        private bool settingsChanged;
         private Color strokeColor;
         private Color? fillColor;
         private float strokeWidth;
@@ -185,6 +188,19 @@ namespace Trazo {
             fadeTimer.Start();
         }
 
+        protected override void OnFormClosed(FormClosedEventArgs e) {
+            // Una sola escritura por captura, aunque se cambie el estilo muchas veces (p. ej. con Ctrl+rueda)
+            if (settingsChanged) {
+                settingsChanged = false;
+                try {
+                    settings.Save();
+                } catch (Exception) {
+                    // Sin permisos o disco lleno: el estilo se conserva en memoria mientras Trazo siga abierto
+                }
+            }
+            base.OnFormClosed(e);
+        }
+
         protected override void WndProc(ref Message m) {
             // La ventana abarca monitores con distinto escalado: Windows no debe redimensionarla
             if (m.Msg == WM_DPICHANGED) return;
@@ -218,12 +234,31 @@ namespace Trazo {
             if (disposing) crossCursor.Dispose();
         }
 
+        /// <summary>
+        /// La captura oscurecida (como un velo negro de alfa 175: cada canal a 80/255). Se calcula por filas
+        /// en paralelo: con varios monitores es unas tres veces más rápido que pintar el velo con GDI+.
+        /// </summary>
         private static Bitmap CreateDimmed(Bitmap source) {
-            var bmp = new Bitmap(source.Width, source.Height, PixelFormat.Format32bppPArgb);
-            using var g = Graphics.FromImage(bmp);
-            g.DrawImageUnscaled(source, 0, 0);
-            using var shade = new SolidBrush(Color.FromArgb(175, 0, 0, 0));
-            g.FillRectangle(shade, 0, 0, bmp.Width, bmp.Height);
+            int w = source.Width, h = source.Height;
+            var rect = new Rectangle(0, 0, w, h);
+            var bmp = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
+            BitmapData src = source.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
+            BitmapData dst = bmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
+            try {
+                Parallel.For(0, h, () => new int[w], (y, _, row) => {
+                    Marshal.Copy(src.Scan0 + y * src.Stride, row, 0, w);
+                    for (int x = 0; x < w; x++) {
+                        // Rojo y azul a la vez, y luego verde: multiplicar por 80 y dividir por 256 ≈ 80/255
+                        int p = row[x];
+                        row[x] = unchecked((int)0xFF000000) | (((p & 0xFF00FF) * 80 >> 8) & 0xFF00FF) | (((p & 0x00FF00) * 80 >> 8) & 0x00FF00);
+                    }
+                    Marshal.Copy(row, 0, dst.Scan0 + y * dst.Stride, w);
+                    return row;
+                }, _ => { });
+            } finally {
+                bmp.UnlockBits(dst);
+                source.UnlockBits(src);
+            }
             return bmp;
         }
 
@@ -453,7 +488,7 @@ namespace Trazo {
             settings.StrokeWidth = strokeWidth;
             settings.TextFont = textFont;
             settings.TextSize = textSize;
-            settings.Save();
+            settingsChanged = true;
         }
 
         private Color? PickWithDialog(Color current) {
@@ -472,7 +507,7 @@ namespace Trazo {
             foreach (KeyValuePair<Tool, ToolStripButton> pair in toolButtons) pair.Value.Checked = pair.Key == t;
             if (IsDrawingTool(t) && settings.LastTool != t.ToString()) {
                 settings.LastTool = t.ToString();
-                settings.Save();
+                settingsChanged = true;
             }
             UpdateTextControls();
             Cursor = ToolCursor;

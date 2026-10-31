@@ -33,19 +33,12 @@ namespace Trazo {
             try {
                 NativeMethods.BitBlt(memDc, 0, 0, w, h, screenDc, bounds.X, bounds.Y, NativeMethods.SRCCOPY);
 
-                // PArgb es el formato que GDI+ dibuja más rápido. La pantalla es opaca: alfa a 255 en todos los píxeles
+                // PArgb es el formato que GDI+ dibuja más rápido. Los píxeles del DIB se entregan como 32bppRgb
+                // (sin alfa) y GDI+ los convierte al desbloquear, con alfa a 255: sin copias intermedias
                 var bmp = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
-                BitmapData data = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, bmp.PixelFormat);
-                try {
-                    var row = new int[w];
-                    for (int y = 0; y < h; y++) {
-                        Marshal.Copy(bits + y * w * 4, row, 0, w);
-                        for (int x = 0; x < w; x++) row[x] |= unchecked((int)0xFF000000);
-                        Marshal.Copy(row, 0, data.Scan0 + y * data.Stride, w);
-                    }
-                } finally {
-                    bmp.UnlockBits(data);
-                }
+                var data = new BitmapData { Width = w, Height = h, Stride = w * 4, PixelFormat = PixelFormat.Format32bppRgb, Scan0 = bits };
+                bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly | ImageLockMode.UserInputBuffer, PixelFormat.Format32bppRgb, data);
+                bmp.UnlockBits(data);
                 return bmp;
             } finally {
                 NativeMethods.SelectObject(memDc, previous);

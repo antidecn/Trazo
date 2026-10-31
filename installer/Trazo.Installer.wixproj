@@ -9,7 +9,7 @@
   -->
 
   <PropertyGroup>
-    <AppVersion>1.4.2</AppVersion>
+    <AppVersion>1.4.3</AppVersion>
     <OutputName>Trazo-$(AppVersion)</OutputName>
     <Platform>x64</Platform>
     <InstallerPlatform>x64</InstallerPlatform>
