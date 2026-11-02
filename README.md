@@ -9,6 +9,10 @@
   Ligera, sin conexión a internet (salvo cuando tú buscas actualizaciones) y sin nada ejecutándose en segundo plano más allá de su icono en la bandeja.
 </p>
 
+<p align="center">
+  <img src="docs/capturas/anotaciones.png" alt="Zona capturada con un rectángulo, una flecha, un texto y los correos pixelados, y la barra de herramientas de Trazo">
+</p>
+
 ---
 
 ## Características
@@ -23,6 +27,10 @@
 - **Esquinas redondeadas y borde** opcionales en la imagen copiada o guardada (tres tamaños de cada uno y el color del borde), desde la configuración.
 - Recuerda la última herramienta y el último estilo usados, y permite cambiar el atajo e iniciar con Windows desde su configuración.
 - El icono de la bandeja se adapta a la barra de tareas clara u oscura.
+
+| Cuentagotas | Reconocimiento de texto |
+|---|---|
+| <img src="docs/capturas/cuentagotas.png" alt="Lupa del cuentagotas sobre una barra naranja, con su color #F97316"> | <img src="docs/capturas/ocr.png" alt="Texto de la zona elegida leído con OCR, listo para copiar"> |
 
 ## Atajos
 
@@ -111,7 +119,7 @@ powershell -ExecutionPolicy Bypass -File assets\build-assets.ps1
 | `Icons.cs` | Iconos de la barra de herramientas, dibujados por código |
 | `installer/` | Instalador MSI (WiX Toolset 5) |
 | `assets/` | Logo fuente y script que genera iconos e imágenes |
-| `docs/` | Informe de consumo de recursos y logo del README |
+| `docs/` | Informe de consumo de recursos, logo y capturas del README (`assets\capturas-readme.ps1` las regenera) |
 
 ## Licencia
 

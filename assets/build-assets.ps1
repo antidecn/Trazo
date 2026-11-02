@@ -9,7 +9,8 @@
 #
 # Uso (Windows PowerShell):  powershell -ExecutionPolicy Bypass -File assets\build-assets.ps1
 #
-# Trazo-simbolo.ai: guardado desde Illustrator con "Crear archivo compatible con PDF" (la opción por defecto).
+# Trazo-simbolo.ai: guardado desde Illustrator con "Crear archivo compatible con PDF" (la opción por defecto),
+# o desde VectorCraft (que dibuja dentro de un objeto de formulario del PDF; también se lee).
 # Se usan las formas rellenas de la mesa de trabajo, en cualquier color; para trazos, Objeto > Expandir antes de guardar.
 # Cada tamaño se dibuja desde el vector, así los iconos pequeños quedan nítidos.
 
@@ -49,9 +50,30 @@ public static class TrazoAssets {
         if (!text.StartsWith("%PDF")) throw new Exception("El .ai no es compatible con PDF: guárdalo con 'Crear archivo compatible con PDF'.");
 
         float pageHeight = float.Parse(Regex.Match(text, @"/MediaBox\s*\[\s*[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+([-\d.]+)").Groups[1].Value, CultureInfo.InvariantCulture);
+
+        // Objetos de formulario (XObject /Form) por nombre: algunos programas (VectorCraft) dibujan ahí
+        // y la página solo los invoca con "/x0 Do"
+        var xobjects = new Dictionary<string, string>();
+        foreach (Match d in Regex.Matches(text, @"/XObject\s*<<(.*?)>>", RegexOptions.Singleline)) {
+            foreach (Match e in Regex.Matches(d.Groups[1].Value, @"/([^\s/\[\]<>()]+)\s+(\d+) 0 R")) xobjects[e.Groups[1].Value] = e.Groups[2].Value;
+        }
+        Func<string, Tuple<string, Matrix>> readForm = name => {
+            string id;
+            if (!xobjects.TryGetValue(name, out id)) return null;
+            string dict = Regex.Match(text, @"(?<!\d)" + id + @" 0 obj\s*<<(.*?)>>\s*stream", RegexOptions.Singleline).Groups[1].Value;
+            if (!dict.Contains("/Subtype/Form") && !dict.Contains("/Subtype /Form")) return null;
+            var matrix = new Matrix();
+            Match mt = Regex.Match(dict, @"/Matrix\s*\[([^\]]*)\]");
+            if (mt.Success) {
+                float[] v = Array.ConvertAll(mt.Groups[1].Value.Trim().Split((char[])null, StringSplitOptions.RemoveEmptyEntries), x => float.Parse(x, CultureInfo.InvariantCulture));
+                matrix = new Matrix(v[0], v[1], v[2], v[3], v[4], v[5]);
+            }
+            return Tuple.Create(ReadStream(bytes, text, id), matrix);
+        };
+
         var path2d = new GraphicsPath(FillMode.Winding);
         foreach (Match contents in Regex.Matches(text, @"/Contents\s+(\d+) 0 R")) {
-            AddContent(path2d, ReadStream(bytes, text, contents.Groups[1].Value), pageHeight);
+            AddContent(path2d, ReadStream(bytes, text, contents.Groups[1].Value), pageHeight, new Matrix(), readForm, 0);
         }
         if (path2d.PointCount == 0) throw new Exception("No se han encontrado formas rellenas en el .ai.");
         return path2d;
@@ -69,9 +91,10 @@ public static class TrazoAssets {
         using (var sr = new StreamReader(ds, Encoding.GetEncoding(28591))) return sr.ReadToEnd();
     }
 
-    static void AddContent(GraphicsPath result, string content, float pageHeight) {
+    static void AddContent(GraphicsPath result, string content, float pageHeight, Matrix initial, Func<string, Tuple<string, Matrix>> readForm, int depth) {
         var stack = new Stack<Matrix>();
-        var ctm = new Matrix();
+        var ctm = initial;
+        string lastName = null;
         var nums = new List<float>();
         var shape = new GraphicsPath(FillMode.Winding);
         PointF cur = PointF.Empty, start = PointF.Empty;
@@ -89,9 +112,10 @@ public static class TrazoAssets {
                 if (float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out v)) nums.Add(v);
                 continue;
             }
+            if (s[0] == '/') { lastName = s.Substring(1); continue; }
             switch (s) {
                 case "q": stack.Push(ctm.Clone()); break;
-                case "Q": ctm = stack.Count > 0 ? stack.Pop() : new Matrix(); break;
+                case "Q": ctm = stack.Count > 0 ? stack.Pop() : initial.Clone(); break;
                 case "cm": {
                     var m = new Matrix(nums[0], nums[1], nums[2], nums[3], nums[4], nums[5]);
                     m.Multiply(ctm, MatrixOrder.Append);
@@ -138,8 +162,19 @@ public static class TrazoAssets {
                 case "n": case "S": case "s":
                     shape = new GraphicsPath(FillMode.Winding);
                     break;
+                case "Do": {
+                    // El formulario se dibuja con la transformación actual (y su propia /Matrix, si la tiene)
+                    var form = lastName != null && depth < 8 ? readForm(lastName) : null;
+                    if (form != null) {
+                        var m = form.Item2;
+                        m.Multiply(ctm, MatrixOrder.Append);
+                        AddContent(result, form.Item1, pageHeight, m, readForm, depth + 1);
+                    }
+                    break;
+                }
             }
             nums.Clear();
+            lastName = null;
         }
     }
 

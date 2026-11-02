@@ -1,6 +1,8 @@
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text;
+using System.Text.RegularExpressions;
 using Windows.Globalization;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
@@ -29,7 +31,95 @@ namespace Trazo {
             using SoftwareBitmap softwareBitmap = ToSoftwareBitmap(prepared);
             OcrResult result = await engine.RecognizeAsync(softwareBitmap);
 
-            return string.Join(Environment.NewLine, result.Lines.Select(l => l.Text));
+            return JoinParagraphs(result.Lines);
+        }
+
+        /// <summary>
+        /// El motor devuelve una línea por cada renglón visual, así que un párrafo que en pantalla
+        /// ocupa varios renglones saldría partido. Se unen los renglones que, por su posición,
+        /// son continuación del anterior; los títulos, listas y líneas sueltas se mantienen aparte.
+        /// </summary>
+        private static string JoinParagraphs(IReadOnlyList<OcrLine> lines) {
+            var sb = new StringBuilder();
+            LineBox? prev = null;
+
+            foreach (OcrLine line in lines) {
+                if (line.Words.Count == 0) continue;
+                var box = new LineBox(line);
+
+                if (prev == null) {
+                    sb.Append(box.Text);
+                } else if (Continues(prev, box)) {
+                    // Palabra cortada con guion al final del renglón: se recompone
+                    string done = sb.ToString();
+                    if (done.Length >= 2 && done[done.Length - 1] == '-' && char.IsLetter(done[done.Length - 2]) && char.IsLower(box.Text[0])) {
+                        sb.Length--;
+                    } else {
+                        sb.Append(' ');
+                    }
+                    sb.Append(box.Text);
+                } else {
+                    sb.Append(Environment.NewLine).Append(box.Text);
+                }
+                prev = box;
+            }
+            return sb.ToString();
+        }
+
+        private static bool Continues(LineBox prev, LineBox next) {
+            double h = Math.Max(prev.Height, next.Height);
+
+            // Tamaño de letra parecido (un título no se une con el texto que le sigue)
+            if (Math.Min(prev.Height, next.Height) < h * 0.75) return false;
+
+            // Justo debajo, sin el hueco que separa párrafos
+            double gap = next.Top - prev.Bottom;
+            if (gap < -h * 0.3 || gap > h * 0.75) return false;
+
+            // Mismo margen izquierdo (se admite sangría en la primera línea del párrafo)
+            double indent = prev.Left - next.Left;
+            if (indent < -h || indent > h * 3) return false;
+
+            // Un renglón partido por falta de sitio suele ser largo; los elementos de menús
+            // o listas cortas van cada uno en su línea
+            if (prev.WordCount < 4) return false;
+
+            // Si la primera palabra del siguiente renglón cabía al final del anterior,
+            // el salto era intencionado
+            if (next.Right - prev.Right > next.FirstWordWidth + h) return false;
+
+            // Viñetas y listas numeradas empiezan línea nueva
+            if (ListMarker.IsMatch(next.Text)) return false;
+
+            return true;
+        }
+
+        private static readonly Regex ListMarker = new(@"^\s*([•·▪◦‣►\-–—*]|\d{1,3}[.)]|[a-zA-Z][)])\s");
+
+        private sealed class LineBox {
+            public string Text { get; }
+            public int WordCount { get; }
+            public double Left { get; }
+            public double Top { get; }
+            public double Right { get; }
+            public double Bottom { get; }
+            public double FirstWordWidth { get; }
+            public double Height => Bottom - Top;
+
+            public LineBox(OcrLine line) {
+                Text = line.Text;
+                WordCount = line.Words.Count;
+                Left = Top = double.MaxValue;
+                Right = Bottom = double.MinValue;
+                foreach (OcrWord w in line.Words) {
+                    var r = w.BoundingRect;
+                    Left = Math.Min(Left, r.X);
+                    Top = Math.Min(Top, r.Y);
+                    Right = Math.Max(Right, r.X + r.Width);
+                    Bottom = Math.Max(Bottom, r.Y + r.Height);
+                }
+                FirstWordWidth = line.Words[0].BoundingRect.Width;
+            }
         }
 
         /// <summary>

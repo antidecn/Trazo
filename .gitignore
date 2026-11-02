@@ -12,3 +12,8 @@ obj/
 # Sistema
 Thumbs.db
 Desktop.ini
+
+# Instrucciones locales para Claude Code
+.claude
+CLAUDE.md
+assets/capturas-readme.ps1
