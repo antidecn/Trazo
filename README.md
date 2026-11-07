@@ -66,13 +66,16 @@ Para mover un elemento, haz doble clic sobre él para seleccionarlo y arrástral
 
 1. Descarga el instalador `Trazo-<versión>.msi` desde la sección **Releases**.
 2. Ábrelo y elige si instalarlo solo para ti (sin permisos de administrador) o para todos los usuarios del equipo.
+3. El asistente pregunta si quieres que Trazo te avise de las versiones nuevas (desmarcado por defecto). Puedes cambiarlo después en la configuración.
 
 > [!NOTE]
 > El instalador no está firmado digitalmente, así que Windows puede mostrar el aviso *"Windows protegió su PC"*. Para continuar, pulsa **Más información → Ejecutar de todas formas**.
 
 **Requisitos:** Windows 10 (versión 1903 o posterior) o Windows 11. Usa .NET Framework 4.8, que ya viene incluido en Windows.
 
-**Actualizar:** en el menú del icono de la bandeja, pulsa **Buscar actualizaciones…**. Trazo consulta las Releases de GitHub y, si hay una versión nueva y aceptas, descarga el instalador y lo abre. Trazo nunca busca actualizaciones por su cuenta. También puedes abrir a mano el instalador de la versión nueva: detecta la que tienes, la sustituye y conserva tu configuración.
+**Actualizar:** pulsa **Buscar actualizaciones…** en el menú del icono de la bandeja o en la configuración. Trazo consulta las Releases de GitHub y, si hay una versión nueva, te muestra sus novedades; si aceptas, descarga el instalador y lo abre. También puedes abrir a mano el instalador de la versión nueva: detecta la que tienes, la sustituye y conserva tu configuración.
+
+**Aviso de versiones nuevas:** si activas **Comprobar actualizaciones** en la configuración (o lo marcas al instalar), Trazo consulta GitHub como mucho una vez al día, empezando 5 minutos después de arrancar, y te avisa con una notificación discreta cuando hay una versión nueva. Viene desactivado. Solo avisa: nunca descarga ni instala nada sin que lo confirmes.
 
 Para publicar una versión, crea una Release en GitHub con la etiqueta `v<versión>` (por ejemplo `v1.2.0`) y adjunta el archivo `Trazo-<versión>.msi`.
 
@@ -120,6 +123,10 @@ powershell -ExecutionPolicy Bypass -File assets\build-assets.ps1
 |---|---|
 | `Program.cs`, `TrayContext.cs` | Arranque, icono de la bandeja y atajo global |
 | `Updater.cs` | Búsqueda de actualizaciones en las Releases de GitHub |
+| `UpdateToast.cs` | Aviso discreto de versión nueva |
+| `TrazoMessage.cs` | Mensajes con el estilo de Trazo (por ejemplo, los de las actualizaciones) |
+| `DarkMenu.cs` | Menú oscuro del icono de la bandeja |
+| `ShortcutsForm.cs` | Ventana de atajos de teclado |
 | `CaptureOverlay.cs`, `Shapes.cs` | Pantalla de captura, herramientas y formas |
 | `OcrService.cs` | Reconocimiento de texto con el OCR de Windows |
 | `SettingsForm.cs`, `AppSettings.cs` | Configuración y su almacenamiento en `%AppData%\Trazo` |
