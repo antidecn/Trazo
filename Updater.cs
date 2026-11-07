@@ -7,8 +7,8 @@ using System.Text;
 namespace Trazo {
 
     /// <summary>
-    /// Actualizaciones desde las Releases de GitHub. Solo se consulta cuando el usuario lo pide
-    /// desde el menú de la bandeja: Trazo no comprueba nada por su cuenta.
+    /// Actualizaciones desde las Releases de GitHub. Se consulta cuando el usuario lo pide y, si ha activado los avisos,
+    /// una vez al día en segundo plano. Nunca se descarga ni instala nada sin que el usuario lo confirme.
     /// </summary>
     internal static class Updater {
 
@@ -30,8 +30,8 @@ namespace Trazo {
             try {
                 release = await GetLatestAsync();
             } catch (Exception ex) {
-                if (Show($"No se ha podido comprobar si hay actualizaciones.\n\n{ex.Message}\n\n¿Quieres abrir la página de versiones en el navegador?",
-                        MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes) {
+                if (await TrazoMessage.ShowAsync("No se ha podido comprobar si hay actualizaciones",
+                        $"{ex.Message}\n\nPuedes mirarlo en la página de versiones de Trazo.", "Abrir la página", "Cerrar")) {
                     OpenUrl(ReleasesPage);
                 }
                 return false;
@@ -39,11 +39,11 @@ namespace Trazo {
 
             Version current = CurrentVersion;
             if (release == null || release.Version == null) {
-                Show($"No hay ninguna versión publicada todavía.\n\nTienes la versión {current}.", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                await TrazoMessage.ShowAsync("No hay versiones publicadas", $"Todavía no hay ninguna versión publicada. Tienes la versión {current}.");
                 return false;
             }
             if (release.Version <= current) {
-                Show($"Ya tienes la última versión de Trazo ({current}).", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                await TrazoMessage.ShowAsync("Trazo está actualizado", $"Ya tienes la última versión de Trazo ({current}).");
                 return false;
             }
 
@@ -51,20 +51,27 @@ namespace Trazo {
             Asset? installer = release.Assets?.FirstOrDefault(a =>
                 a.Name?.EndsWith(".msi", StringComparison.OrdinalIgnoreCase) == true &&
                 IsRepositoryUrl(a.DownloadUrl, "releases/download/"));
-            string notes = Summarize(release.Body);
-            string message = $"Hay una versión nueva de Trazo: {release.Version} (tienes la {current}).";
-            if (notes.Length > 0) message += $"\n\nNovedades:\n{notes}";
+            string notes = Summarize(release.Body, out bool truncated);
+            string title = $"Hay una versión nueva de Trazo: {release.Version}";
+            string message = $"Tienes la versión {current}.";
+            // Las notas ya traen sus propios apartados (Novedades, Mejoras, Correcciones)
+            if (notes.Length > 0) message += $"\n\n{notes}";
+            string releasePage = IsRepositoryUrl(release.PageUrl, "releases/") ? release.PageUrl! : ReleasesPage;
+            // Novedades recortadas: enlace a la versión en GitHub para leerlas enteras
+            (string, string, string)? fullNotes = truncated
+                ? ("Si quieres ver todas las novedades que se han añadido, accede a GitHub.", "GitHub", releasePage)
+                : null;
 
             if (installer == null) {
-                if (Show(message + "\n\n¿Quieres abrir la página de la versión para descargarla?",
-                        MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes) {
-                    OpenUrl(IsRepositoryUrl(release.PageUrl, "releases/") ? release.PageUrl! : ReleasesPage);
+                if (await TrazoMessage.ShowAsync(title, message, "Abrir la página", "Ahora no", fullNotes,
+                        "¿Quieres abrir la página de la versión para descargarla?")) {
+                    OpenUrl(releasePage);
                 }
                 return false;
             }
 
-            if (Show(message + "\n\n¿Quieres descargarla e instalarla ahora? Trazo se cerrará para actualizarse.",
-                    MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) {
+            if (!await TrazoMessage.ShowAsync(title, message, "Descargar e instalar", "Ahora no", fullNotes,
+                    "¿Quieres descargarla e instalarla ahora? Trazo se cerrará para actualizarse.")) {
                 return false;
             }
 
@@ -72,13 +79,27 @@ namespace Trazo {
             try {
                 path = await DownloadAsync(installer);
             } catch (Exception ex) {
-                Show($"No se ha podido descargar la actualización.\n\n{ex.Message}", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                await TrazoMessage.ShowAsync("No se ha podido descargar la actualización", ex.Message);
                 return false;
             }
 
             // Con interfaz: el asistente detecta la versión instalada, la sustituye y ofrece volver a abrir Trazo
             Process.Start(new ProcessStartInfo("msiexec.exe", $"/i \"{path}\"") { UseShellExecute = true });
             return true;
+        }
+
+        /// <summary>
+        /// Comprobación en segundo plano para el aviso de versión nueva: sin mensajes ni errores a la vista
+        /// (sin conexión, simplemente no hay aviso). No descarga ni instala nada.
+        /// </summary>
+        /// <returns>La versión publicada más reciente, o null si no se ha podido consultar o no hay ninguna.</returns>
+        public static async Task<Version?> GetLatestVersionQuietlyAsync() {
+            try {
+                Release? release = await GetLatestAsync();
+                return release?.Version;
+            } catch (Exception) {
+                return null;
+            }
         }
 
         /// <summary>
@@ -134,15 +155,20 @@ namespace Trazo {
         }
 
         /// <summary>Primeras líneas de las notas de la versión, sin el marcado de Markdown más habitual.</summary>
-        private static string Summarize(string? body) {
+        /// <param name="truncated">Las notas eran más largas y se han recortado.</param>
+        private static string Summarize(string? body, out bool truncated) {
+            truncated = false;
             if (string.IsNullOrWhiteSpace(body)) return "";
             string[] lines = body!.Replace("\r", "").Split('\n')
                 .Select(l => l.Trim().TrimStart('#').Trim().Replace("**", ""))
                 .Where(l => l.Length > 0)
+                // Sin el título de la nota ("Trazo X.Y.Z"): ya lo dice el título de la ventana
+                .SkipWhile(l => l.StartsWith("Trazo ", StringComparison.OrdinalIgnoreCase))
                 .ToArray();
             const int max = 12;
+            truncated = lines.Length > max;
             string text = string.Join("\n", lines.Take(max));
-            return lines.Length > max ? text + "\n…" : text;
+            return truncated ? text + "\n…" : text;
         }
 
         private static Version Normalize(Version v) => new(v.Major, Math.Max(0, v.Minor), Math.Max(0, v.Build));
@@ -153,13 +179,6 @@ namespace Trazo {
             } catch (Exception) {
                 // Sin navegador predeterminado: no hay nada más que hacer
             }
-        }
-
-        /// <summary>Mensaje siempre visible: Trazo no tiene ventana a la que asociarlo.</summary>
-        private static DialogResult Show(string text, MessageBoxButtons buttons, MessageBoxIcon icon) {
-            using var owner = new Form { TopMost = true, ShowInTaskbar = false, Opacity = 0, StartPosition = FormStartPosition.CenterScreen };
-            owner.Show();
-            return MessageBox.Show(owner, text, "Actualizaciones de Trazo", buttons, icon);
         }
 
         [DataContract]

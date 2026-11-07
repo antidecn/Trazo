@@ -15,6 +15,33 @@ namespace Trazo {
         [DllImport("kernel32.dll")]
         public static extern IntPtr GetCurrentProcess();
 
+        public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20, DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWA_BORDER_COLOR = 34, DWMWA_CAPTION_COLOR = 35;
+        /// <summary>Esquinas redondeadas de Windows 11, las de las ventanas.</summary>
+        public const int DWMWCP_ROUND = 2;
+
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WtaOptions {
+            public uint Flags;
+            public uint Mask;
+        }
+
+        private const int WTA_NONCLIENT = 1;
+        private const uint WTNCA_NODRAWCAPTION = 0x1, WTNCA_NODRAWICON = 0x2;
+
+        [DllImport("uxtheme.dll")]
+        private static extern int SetWindowThemeAttribute(IntPtr hwnd, int attribute, ref WtaOptions options, uint size);
+
+        /// <summary>
+        /// Barra de título limpia, sin icono ni texto. Siguen viéndose en la barra de tareas y en Alt+Tab.
+        /// </summary>
+        public static void HideCaption(IntPtr hwnd) {
+            var options = new WtaOptions { Flags = WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON, Mask = WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON };
+            SetWindowThemeAttribute(hwnd, WTA_NONCLIENT, ref options, (uint)Marshal.SizeOf(typeof(WtaOptions)));
+        }
+
         [DllImport("kernel32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool SetProcessWorkingSetSize(IntPtr hProcess, IntPtr minimumSize, IntPtr maximumSize);

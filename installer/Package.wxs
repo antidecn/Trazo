@@ -113,10 +113,23 @@
                      Type="string" Value="&quot;[INSTALLFOLDER]Trazo.exe&quot;" KeyPath="yes" />
     </Component>
 
+    <!--
+      Avisos de versiones nuevas: la casilla del asistente deja la respuesta ("1" o "0") en HKCU\Software\Trazo,
+      valor NotifyUpdates. Trazo la pasa a su configuración al arrancar y borra el valor; desde ahí se cambia
+      en Configuración. Solo se escribe si el asistente ha mostrado la pregunta (instalación nueva con interfaz).
+    -->
+    <Property Id="NOTIFYUPDATES" Secure="yes" />
+    <Property Id="UPDATESCHOICE" Secure="yes" />
+    <Component Id="UpdatesChoice" Directory="INSTALLFOLDER" Condition="UPDATESCHOICE">
+      <RegistryValue Root="HKCU" Key="Software\Trazo" Name="UpdatesAsked" Type="integer" Value="1" KeyPath="yes" />
+      <RegistryValue Root="HKCU" Key="Software\Trazo" Name="NotifyUpdates" Type="string" Value="[UPDATESCHOICE]" />
+    </Component>
+
     <Feature Id="Main" Title="Trazo">
       <ComponentGroupRef Id="AppFiles" />
       <ComponentRef Id="StartMenuShortcut" />
       <ComponentRef Id="Autostart" />
+      <ComponentRef Id="UpdatesChoice" />
     </Feature>
 
     <!--
@@ -142,7 +155,7 @@
   </Package>
 
   <!--
-    Interfaz: Bienvenida → Tipo de instalación → Carpeta de destino → Listo para instalar → Progreso → Fin.
+    Interfaz: Bienvenida → Tipo de instalación → Carpeta de destino → Avisos de actualizaciones → Listo para instalar → Progreso → Fin.
   -->
   <Fragment>
     <UI Id="TrazoUI">
@@ -190,6 +203,28 @@
         </Control>
       </Dialog>
 
+      <!-- Avisos de versiones nuevas: casilla desmarcada por defecto -->
+      <Dialog Id="TrazoUpdatesDlg" Width="370" Height="270" Title="Instalación de Trazo">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="250" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Avisos de actualizaciones" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="300" Height="15" Transparent="yes" NoPrefix="yes" Text="¿Quieres saber cuándo hay una versión nueva de Trazo?" />
+
+        <Control Id="Notify" Type="CheckBox" X="20" Y="62" Width="330" Height="17" Property="NOTIFYUPDATES" CheckBoxValue="1"
+                 Text="Avisarme cuando haya una versión nueva" />
+        <Control Id="NotifyDescription" Type="Text" X="33" Y="82" Width="315" Height="52" NoPrefix="yes"
+                 Text="Trazo lo comprobará como mucho una vez al día y te mostrará un aviso. Nunca se actualiza solo: desde el aviso puedes ver la versión nueva y decidir si instalarla." />
+        <Control Id="SettingsNote" Type="Text" X="20" Y="150" Width="330" Height="30" NoPrefix="yes"
+                 Text="Puedes cambiarlo cuando quieras en la configuración de Trazo (doble clic en su icono de la bandeja)." />
+
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
       <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
 
       <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="TrazoScopeDlg" Condition="NOT Installed AND NOT PREVIOUSSCOPE" />
@@ -214,13 +249,19 @@
       <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
       <Publish Dialog="InstallDirDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath_$(sys.BUILDARCHSHORT)" Order="2" Condition="NOT WIXUI_DONTVALIDATEPATH" />
       <Publish Dialog="InstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
-      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="TrazoUpdatesDlg" Order="4" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
       <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
       <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
       <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction" Value="WixUIValidatePath_$(sys.BUILDARCHSHORT)" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH" />
       <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="4" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
 
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" Order="1" Condition="NOT Installed AND NOT PREVIOUSSCOPE" />
+      <!-- La respuesta se guarda como "1" o "0" (la casilla desmarcada deja la propiedad vacía) -->
+      <Publish Dialog="TrazoUpdatesDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" />
+      <Publish Dialog="TrazoUpdatesDlg" Control="Next" Property="UPDATESCHOICE" Value="1" Order="1" Condition="NOTIFYUPDATES" />
+      <Publish Dialog="TrazoUpdatesDlg" Control="Next" Property="UPDATESCHOICE" Value="0" Order="2" Condition="NOT NOTIFYUPDATES" />
+      <Publish Dialog="TrazoUpdatesDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="3" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="TrazoUpdatesDlg" Order="1" Condition="NOT Installed AND NOT PREVIOUSSCOPE" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="NOT Installed AND PREVIOUSSCOPE" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed" />
 

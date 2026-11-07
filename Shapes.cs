@@ -151,6 +151,450 @@ namespace Trazo {
     }
 
     /// <summary>
+    /// Flecha pintada a mano: el recorrido se endereza en tramos rectos (horizontales y verticales
+    /// si se acercan a ellos) unidos en ángulo recto o con esquinas redondeadas.
+    /// </summary>
+    internal sealed class PathArrowShape : Shape {
+
+        /// <summary>Vértices del recorrido ya enderezado, del origen a la punta.</summary>
+        public Point[] Points { get; private set; }
+        public bool Rounded { get; set; }
+
+        // Trazo a mano mientras se pinta (no se muestra: solo sirve para calcular el recorrido); se descarta al terminar
+        private List<Point>? trace;
+
+        public PathArrowShape(Point start) {
+            trace = new List<Point> { start };
+            Points = new[] { start, start };
+        }
+
+        private float HeadLength => Math.Max(12, Width * 4);
+        private float CornerRadius => 14 + Width * 3;
+
+        public void AddPoint(Point p, bool axisOnly) {
+            if (trace == null) return;
+            trace.Add(p);
+            Points = PathRouter.Route(trace, axisOnly);
+        }
+
+        /// <summary>Termina de pintar: el trazo a mano ya no hace falta.</summary>
+        public void Finish() => trace = null;
+
+        // Edición de un punto clave: recorrido al empezar a arrastrar y qué tramos eran horizontales o verticales
+        private Point[]? editOrigin;
+        private bool[]? editHorizontal, editVertical;
+
+        public void BeginEdit() {
+            editOrigin = Points;
+            int segments = Points.Length - 1;
+            editHorizontal = new bool[segments];
+            editVertical = new bool[segments];
+            for (int k = 0; k < segments; k++) {
+                Point a = Points[k], b = Points[k + 1];
+                editHorizontal[k] = a.Y == b.Y && a.X != b.X;
+                editVertical[k] = a.X == b.X && a.Y != b.Y;
+            }
+        }
+
+        /// <summary>
+        /// Lleva el punto clave <paramref name="index"/> a <paramref name="p"/>. Los tramos horizontales y verticales
+        /// que salen de él lo siguen siendo: el punto vecino se desplaza con él (como al mover un tramo entero).
+        /// </summary>
+        public void MoveVertex(int index, Point p) {
+            if (editOrigin == null || editHorizontal == null || editVertical == null) return;
+            // Copia nueva: las copias para deshacer comparten la anterior
+            var pts = (Point[])editOrigin.Clone();
+            pts[index] = p;
+            if (index > 0) {
+                if (editHorizontal[index - 1]) pts[index - 1].Y = p.Y;
+                else if (editVertical[index - 1]) pts[index - 1].X = p.X;
+            }
+            if (index < pts.Length - 1) {
+                if (editHorizontal[index]) pts[index + 1].Y = p.Y;
+                else if (editVertical[index]) pts[index + 1].X = p.X;
+            }
+            Points = pts;
+        }
+
+        /// <summary>Termina de arrastrar: se quitan los puntos que hayan quedado repetidos o en medio de un tramo.</summary>
+        public void EndEdit() {
+            editOrigin = null;
+            editHorizontal = editVertical = null;
+            var pts = Points.ToList();
+            PathRouter.Clean(pts);
+            if (pts.Count >= 2) Points = pts.ToArray();
+        }
+
+        public bool TooSmall {
+            get {
+                double length = 0;
+                for (int i = 1; i < Points.Length; i++) length += PathRouter.Distance(Points[i - 1], Points[i]);
+                return length < 8;
+            }
+        }
+
+        public override Rectangle Bounds {
+            get {
+                Rectangle r = Rectangle.FromLTRB(Points.Min(p => p.X), Points.Min(p => p.Y), Points.Max(p => p.X), Points.Max(p => p.Y));
+                int pad = (int)Math.Ceiling(Math.Max(HeadLength, Width)) + 2;
+                r.Inflate(pad, pad);
+                return r;
+            }
+        }
+
+        public override void Offset(int dx, int dy) {
+            // Copia nueva: las copias para deshacer comparten la anterior
+            Points = Points.Select(p => new Point(p.X + dx, p.Y + dy)).ToArray();
+        }
+
+        public override bool HitTest(Point p) {
+            using GraphicsPath path = BuildPath(0);
+            if (path.PointCount < 2) return false;
+            using var pen = new Pen(Color.Black, Width + HitTolerance * 2);
+            return path.IsOutlineVisible(p, pen);
+        }
+
+        public override void Draw(Graphics g) {
+            Point end = Points[Points.Length - 1], before = Points[Points.Length - 2];
+            float dx = end.X - before.X, dy = end.Y - before.Y;
+            float len = (float)Math.Sqrt(dx * dx + dy * dy);
+            if (len < 1) return;
+
+            float ux = dx / len, uy = dy / len;
+            float head = Math.Min(HeadLength, len);
+            float halfWidth = head * 0.55f;
+
+            // El recorrido termina en la base de la punta para que no asome por delante
+            using (GraphicsPath path = BuildPath(head))
+            using (Pen pen = CreatePen()) {
+                if (!Rounded) pen.LineJoin = LineJoin.Miter;
+                g.DrawPath(pen, path);
+            }
+
+            var baseCenter = new PointF(end.X - ux * head, end.Y - uy * head);
+            PointF[] tip = {
+                end,
+                new(baseCenter.X - uy * halfWidth, baseCenter.Y + ux * halfWidth),
+                new(baseCenter.X + uy * halfWidth, baseCenter.Y - ux * halfWidth),
+            };
+            using var brush = new SolidBrush(Stroke);
+            g.FillPolygon(brush, tip);
+        }
+
+        /// <summary>Recorrido con las esquinas redondeadas si toca, recortado <paramref name="trimEnd"/> px antes de la punta.</summary>
+        private GraphicsPath BuildPath(float trimEnd) {
+            var pts = Points.Select(p => (PointF)p).ToList();
+            int n = pts.Count;
+            if (trimEnd > 0) {
+                PointF a = pts[n - 2], b = pts[n - 1];
+                float len = Length(a, b);
+                if (len > 0) pts[n - 1] = Lerp(b, a, Math.Min(trimEnd, len) / len);
+            }
+
+            var path = new GraphicsPath();
+            if (!Rounded || n < 3) {
+                path.AddLines(pts.ToArray());
+                return path;
+            }
+
+            PointF current = pts[0];
+            for (int i = 1; i < n - 1; i++) {
+                PointF prev = pts[i - 1], corner = pts[i], next = pts[i + 1];
+                float lenIn = Length(prev, corner), lenOut = Length(corner, next);
+                if (lenIn < 0.5f || lenOut < 0.5f) continue;
+
+                // Ángulo que gira el recorrido en la esquina
+                double inX = (corner.X - prev.X) / lenIn, inY = (corner.Y - prev.Y) / lenIn;
+                double outX = (next.X - corner.X) / lenOut, outY = (next.Y - corner.Y) / lenOut;
+                double turn = Math.Acos(Math.Max(-1, Math.Min(1, inX * outX + inY * outY)));
+                if (turn < 0.01 || turn > Math.PI - 0.01) continue;
+
+                // Los tramos interiores se reparten entre sus dos esquinas; el primero y el último, enteros
+                float maxIn = i == 1 ? lenIn : lenIn / 2, maxOut = i == n - 2 ? lenOut : lenOut / 2;
+                double tan = Math.Tan(turn / 2);
+                float t = (float)Math.Min(CornerRadius * tan, Math.Min(maxIn, maxOut));
+                PointF t1 = Lerp(corner, prev, t / lenIn), t2 = Lerp(corner, next, t / lenOut);
+                // Curva de Bézier que aproxima un arco de circunferencia
+                float k = (float)(4.0 / 3.0 * Math.Tan(turn / 4) / tan);
+                path.AddLine(current, t1);
+                path.AddBezier(t1, Lerp(t1, corner, k), Lerp(t2, corner, k), t2);
+                current = t2;
+            }
+            path.AddLine(current, pts[n - 1]);
+            return path;
+        }
+
+        private static float Length(PointF a, PointF b) => (float)Math.Sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y));
+        private static PointF Lerp(PointF a, PointF b, float t) => new(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t);
+    }
+
+    /// <summary>Convierte un trazo a mano en unos pocos tramos rectos.</summary>
+    internal static class PathRouter {
+
+        /// <summary>Un tramo a menos de estos grados de la horizontal o la vertical se endereza a ella.</summary>
+        private const double SnapDegrees = 20;
+
+        /// <summary>Esquinas como máximo, para que la flecha siga siendo sencilla.</summary>
+        private const int MaxCorners = 4;
+
+        /// <summary>Lo más que puede girar el recorrido en una esquina, con margen sobre el ángulo recto.</summary>
+        private const double MaxTurnDegrees = 115;
+
+        /// <summary>Lo más que puede girar en total en un mismo sentido: media vuelta (forma de U), con margen.</summary>
+        private const double MaxTotalTurnDegrees = 200;
+
+        private enum Dir { H, V, Diagonal }
+
+        public static double Distance(Point a, Point b) => Math.Sqrt((double)(a.X - b.X) * (a.X - b.X) + (double)(a.Y - b.Y) * (a.Y - b.Y));
+
+        /// <param name="axisOnly">Todos los tramos horizontales o verticales, sin diagonales.</param>
+        public static Point[] Route(IReadOnlyList<Point> raw, bool axisOnly) {
+            Point start = raw[0], end = raw[raw.Count - 1];
+            var pts = new List<Point> { start };
+            foreach (Point p in raw.Skip(1)) {
+                if (Distance(p, pts[pts.Count - 1]) >= 2) pts.Add(p);
+            }
+            if (pts[pts.Count - 1] != end) pts.Add(end);
+            if (pts.Count < 2) return new[] { start, end };
+
+            // La tolerancia crece con el tamaño del trazo: un temblor en un trazo grande no es una esquina
+            double diag = Distance(new Point(pts.Min(p => p.X), pts.Min(p => p.Y)), new Point(pts.Max(p => p.X), pts.Max(p => p.Y)));
+            double eps = Math.Max(6, Math.Min(28, diag * 0.06));
+
+            List<Point> v = Simplify(pts, eps);
+            RemoveShortSegments(v, eps * 1.5);
+
+            List<Dir> dirs = Reduce(v, axisOnly, eps);
+
+            // Las diagonales solo valen como flecha de un solo tramo. Si el recorrido tiene esquinas, una diagonal
+            // suele ser un desliz del ratón: si casi todo es esa diagonal, queda una diagonal de origen a punta;
+            // si no, cada diagonal se endereza al eje más cercano y se une con el tramo de al lado.
+            if (dirs.Count > 1 && dirs.Contains(Dir.Diagonal)) {
+                double total = 0, longestDiagonal = 0;
+                for (int k = 0; k < dirs.Count; k++) {
+                    double length = Distance(v[k], v[k + 1]);
+                    total += length;
+                    if (dirs[k] == Dir.Diagonal) longestDiagonal = Math.Max(longestDiagonal, length);
+                }
+                if (longestDiagonal >= total * 0.75) {
+                    v = new List<Point> { start, end };
+                    dirs = Classify(v, axisOnly);
+                } else {
+                    dirs = Reduce(v, axisOnly: true, eps);
+                }
+            }
+
+            // Coordenada fija de cada tramo recto: Y en los horizontales, X en los verticales.
+            // El primero pasa por el origen y el último por la punta; los demás, por su punto medio.
+            int last = dirs.Count - 1;
+            var fixedCoord = new int[dirs.Count];
+            for (int k = 0; k <= last; k++) {
+                Point a = v[k], b = v[k + 1];
+                fixedCoord[k] = dirs[k] switch {
+                    Dir.H => k == 0 ? a.Y : k == last ? b.Y : (a.Y + b.Y) / 2,
+                    Dir.V => k == 0 ? a.X : k == last ? b.X : (a.X + b.X) / 2,
+                    _ => 0,
+                };
+            }
+
+            var result = new List<Point>();
+            for (int j = 0; j < v.Count; j++) {
+                int x = v[j].X, y = v[j].Y;
+                foreach (int k in new[] { j - 1, j }) {
+                    if (k < 0 || k > last) continue;
+                    if (dirs[k] == Dir.H) y = fixedCoord[k];
+                    else if (dirs[k] == Dir.V) x = fixedCoord[k];
+                }
+                var p = new Point(x, y);
+                if (result.Count == 0 || result[result.Count - 1] != p) result.Add(p);
+            }
+            RemoveCollinear(result);
+            if (result.Count < 2) return new[] { start, end };
+            return result.ToArray();
+        }
+
+        /// <summary>
+        /// Clasifica los tramos, une los consecutivos que van en la misma dirección y limita la forma:
+        /// como mucho MaxCorners esquinas, ninguna que gire más de un ángulo recto y no más de media vuelta
+        /// en total en un mismo sentido (nada de bucles ni círculos).
+        /// </summary>
+        private static List<Dir> Reduce(List<Point> v, bool axisOnly, double eps) {
+            while (true) {
+                List<Dir> dirs = Classify(v, axisOnly);
+                if (MergeOnce(v, dirs, eps)) continue;
+                if (RemoveSharpTurn(v)) continue;
+                if (v.Count > MaxCorners + 2) {
+                    RemoveLeastSignificant(v);
+                    continue;
+                }
+                return dirs;
+            }
+        }
+
+        /// <summary>Ramer–Douglas–Peucker: se queda con los puntos que se separan más de <paramref name="eps"/> de la recta.</summary>
+        private static List<Point> Simplify(List<Point> pts, double eps) {
+            var keep = new bool[pts.Count];
+            keep[0] = keep[pts.Count - 1] = true;
+            var stack = new Stack<(int, int)>();
+            stack.Push((0, pts.Count - 1));
+            while (stack.Count > 0) {
+                (int a, int b) = stack.Pop();
+                double max = 0;
+                int index = -1;
+                for (int i = a + 1; i < b; i++) {
+                    double d = DistanceToSegment(pts[i], pts[a], pts[b]);
+                    if (d > max) { max = d; index = i; }
+                }
+                if (index < 0 || max <= eps) continue;
+                keep[index] = true;
+                stack.Push((a, index));
+                stack.Push((index, b));
+            }
+            return pts.Where((_, i) => keep[i]).ToList();
+        }
+
+        private static double DistanceToSegment(Point p, Point a, Point b) {
+            double dx = b.X - a.X, dy = b.Y - a.Y;
+            double len2 = dx * dx + dy * dy;
+            if (len2 == 0) return Distance(p, a);
+            double t = Math.Max(0, Math.Min(1, ((p.X - a.X) * dx + (p.Y - a.Y) * dy) / len2));
+            double px = a.X + t * dx - p.X, py = a.Y + t * dy - p.Y;
+            return Math.Sqrt(px * px + py * py);
+        }
+
+        /// <summary>Quita los tramos muy cortos (titubeos al empezar, al terminar o en las esquinas).</summary>
+        private static void RemoveShortSegments(List<Point> v, double minLength) {
+            bool changed = true;
+            while (changed && v.Count > 2) {
+                changed = false;
+                for (int i = 0; i < v.Count - 1 && v.Count > 2; i++) {
+                    if (Distance(v[i], v[i + 1]) >= minLength) continue;
+                    if (i == 0) v.RemoveAt(1);
+                    else if (i + 1 == v.Count - 1) v.RemoveAt(i);
+                    else {
+                        v[i] = new Point((v[i].X + v[i + 1].X) / 2, (v[i].Y + v[i + 1].Y) / 2);
+                        v.RemoveAt(i + 1);
+                    }
+                    changed = true;
+                    break;
+                }
+            }
+        }
+
+        private static List<Dir> Classify(List<Point> v, bool axisOnly) {
+            var dirs = new List<Dir>();
+            for (int i = 0; i < v.Count - 1; i++) {
+                int dx = Math.Abs(v[i + 1].X - v[i].X), dy = Math.Abs(v[i + 1].Y - v[i].Y);
+                double angle = Math.Atan2(Math.Min(dx, dy), Math.Max(dx, dy)) * 180 / Math.PI;
+                dirs.Add(axisOnly || angle <= SnapDegrees ? (dx >= dy ? Dir.H : Dir.V) : Dir.Diagonal);
+            }
+            return dirs;
+        }
+
+        /// <summary>
+        /// Une dos tramos consecutivos en la misma dirección, o deja en una sola esquina una diagonal corta
+        /// entre un tramo horizontal y uno vertical (lo que queda de una esquina dibujada en curva).
+        /// </summary>
+        private static bool MergeOnce(List<Point> v, List<Dir> dirs, double eps) {
+            for (int i = 0; i < dirs.Count - 1; i++) {
+                bool same = dirs[i] != Dir.Diagonal && dirs[i] == dirs[i + 1]
+                    || dirs[i] == Dir.Diagonal && dirs[i + 1] == Dir.Diagonal && AngleBetween(v[i], v[i + 1], v[i + 2]) < 15;
+                if (same) {
+                    v.RemoveAt(i + 1);
+                    return true;
+                }
+            }
+            for (int i = 1; i < dirs.Count - 1; i++) {
+                if (dirs[i] != Dir.Diagonal || dirs[i - 1] == Dir.Diagonal || dirs[i + 1] == Dir.Diagonal || dirs[i - 1] == dirs[i + 1]) continue;
+                double length = Distance(v[i], v[i + 1]);
+                bool shorterThanBoth = length < Distance(v[i - 1], v[i]) && length < Distance(v[i + 1], v[i + 2]);
+                if (length >= eps * 3 && !shorterThanBoth) continue;
+                v[i] = new Point((v[i].X + v[i + 1].X) / 2, (v[i].Y + v[i + 1].Y) / 2);
+                v.RemoveAt(i + 1);
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>Grados que gira el recorrido en <paramref name="b"/>.</summary>
+        private static double AngleBetween(Point a, Point b, Point c) {
+            double a1 = Math.Atan2(b.Y - a.Y, b.X - a.X), a2 = Math.Atan2(c.Y - b.Y, c.X - b.X);
+            double d = Math.Abs(a2 - a1) * 180 / Math.PI;
+            return d > 180 ? 360 - d : d;
+        }
+
+        /// <summary>
+        /// Quita una esquina si el recorrido gira demasiado: una sola que pase de un ángulo recto (vueltas atrás, picos)
+        /// o varias en el mismo sentido que sumen más de media vuelta (rectángulos cerrados, espirales, círculos).
+        /// Las escaleras, que giran a un lado y al otro, se mantienen.
+        /// </summary>
+        private static bool RemoveSharpTurn(List<Point> v) {
+            int worst = -1;
+            double max = MaxTurnDegrees;
+            for (int i = 1; i < v.Count - 1; i++) {
+                double turn = AngleBetween(v[i - 1], v[i], v[i + 1]);
+                if (turn > max) { max = turn; worst = i; }
+            }
+            if (worst >= 0) {
+                v.RemoveAt(worst);
+                return true;
+            }
+
+            double total = 0;
+            for (int i = 1; i < v.Count - 1; i++) {
+                total += SignedTurn(v[i - 1], v[i], v[i + 1]);
+                if (Math.Abs(total) <= MaxTotalTurnDegrees) continue;
+                // Se quita la menos marcada de las esquinas hasta aquí
+                int best = 1;
+                double min = double.MaxValue;
+                for (int j = 1; j <= i; j++) {
+                    double d = DistanceToSegment(v[j], v[j - 1], v[j + 1]);
+                    if (d < min) { min = d; best = j; }
+                }
+                v.RemoveAt(best);
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>Grados que gira el recorrido en <paramref name="b"/>: positivos en un sentido y negativos en el otro.</summary>
+        private static double SignedTurn(Point a, Point b, Point c) {
+            double d = (Math.Atan2(c.Y - b.Y, c.X - b.X) - Math.Atan2(b.Y - a.Y, b.X - a.X)) * 180 / Math.PI;
+            while (d > 180) d -= 360;
+            while (d < -180) d += 360;
+            return d;
+        }
+
+        /// <summary>Quita la esquina que menos se separa de la recta entre sus vecinas.</summary>
+        private static void RemoveLeastSignificant(List<Point> v) {
+            int best = 1;
+            double min = double.MaxValue;
+            for (int i = 1; i < v.Count - 1; i++) {
+                double d = DistanceToSegment(v[i], v[i - 1], v[i + 1]);
+                if (d < min) { min = d; best = i; }
+            }
+            v.RemoveAt(best);
+        }
+
+        /// <summary>Quita los puntos repetidos y los que quedan en medio de un tramo recto.</summary>
+        public static void Clean(List<Point> pts) {
+            for (int i = pts.Count - 1; i >= 1; i--) {
+                if (pts[i] == pts[i - 1]) pts.RemoveAt(i);
+            }
+            RemoveCollinear(pts);
+        }
+
+        private static void RemoveCollinear(List<Point> pts) {
+            for (int i = pts.Count - 2; i >= 1; i--) {
+                Point a = pts[i - 1], b = pts[i], c = pts[i + 1];
+                long cross = (long)(b.X - a.X) * (c.Y - b.Y) - (long)(b.Y - a.Y) * (c.X - b.X);
+                long dot = (long)(b.X - a.X) * (c.X - b.X) + (long)(b.Y - a.Y) * (c.Y - b.Y);
+                if (cross == 0 && dot >= 0) pts.RemoveAt(i);
+            }
+        }
+    }
+
+    /// <summary>
     /// Zona de la captura pixelada para ocultar lo que hay debajo. Trabaja sobre la captura original:
     /// lo dibujado antes queda tapado y lo dibujado después, encima.
     /// </summary>

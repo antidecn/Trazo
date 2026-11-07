@@ -16,6 +16,18 @@ namespace Trazo {
 
         [DataMember] public bool StartWithWindows { get; set; }
 
+        /// <summary>
+        /// Avisar cuando haya una versión nueva (se comprueba como mucho una vez al día). Solo avisa:
+        /// nunca descarga ni instala nada sin que el usuario lo pida.
+        /// </summary>
+        [DataMember] public bool NotifyUpdates { get; set; }
+
+        /// <summary>Última comprobación automática que llegó a GitHub (UTC, formato ISO 8601); vacío si nunca.</summary>
+        [DataMember] public string LastUpdateCheck { get; set; } = "";
+
+        /// <summary>Última versión de la que se ha avisado: de cada una se avisa una sola vez.</summary>
+        [DataMember] public string NotifiedVersion { get; set; } = "";
+
         // Último estilo de dibujo elegido; colores en formato #RRGGBB
 
         [DataMember] public string StrokeColor { get; set; } = "";
@@ -30,8 +42,17 @@ namespace Trazo {
         /// <summary>Tamaño del texto en píxeles.</summary>
         [DataMember] public float TextSize { get; set; }
 
-        /// <summary>Última herramienta de dibujo elegida (Arrow, Line, Rectangle, Ellipse o Text).</summary>
+        /// <summary>Última herramienta de dibujo elegida (Arrow, PathArrow, Line, Rectangle, Ellipse o Text).</summary>
         [DataMember] public string LastTool { get; set; } = "";
+
+        /// <summary>Última flecha elegida (Arrow o PathArrow): la que muestra y activa el botón de flechas.</summary>
+        [DataMember] public string LastArrowTool { get; set; } = "";
+
+        /// <summary>Pintar flecha: esquinas redondeadas en vez de en ángulo recto.</summary>
+        [DataMember] public bool PathArrowRounded { get; set; }
+
+        /// <summary>Reglas en los bordes de la zona y guías para centrar y alinear elementos (Ctrl+R en la captura).</summary>
+        [DataMember] public bool ShowGuides { get; set; }
 
         // Aspecto de la imagen copiada o guardada
 
@@ -57,12 +78,18 @@ namespace Trazo {
         private void SetDefaults() {
             Hotkey = Keys.Control | Keys.Alt | Keys.S;
             StartWithWindows = true;
+            NotifyUpdates = false;
+            LastUpdateCheck = "";
+            NotifiedVersion = "";
             StrokeColor = "#E61E1E";
             FillColor = null;
             StrokeWidth = 3;
             TextFont = TextShape.DefaultFontFamily;
             TextSize = 24;
             LastTool = "Arrow";
+            LastArrowTool = "";
+            PathArrowRounded = false;
+            ShowGuides = false;
             RoundCorners = false;
             CornerRadius = 12;
             AddBorder = false;

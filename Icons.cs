@@ -2,7 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace Trazo {
 
-    internal enum IconKind { Arrow, Line, Rectangle, Ellipse, Text, Pixelate, Picker, Undo, Ocr, Copy, Save, Close }
+    internal enum IconKind { Arrow, PathArrowStraight, PathArrowRounded, Line, Rectangle, Ellipse, Text, Pixelate, Picker, Undo, Ocr, Copy, Save, Close, Update, Help }
 
     /// <summary>
     /// Iconos de la barra dibujados por código: nítidos a cualquier escala y sin archivos de recursos.
@@ -40,6 +40,21 @@ namespace Trazo {
 
                     case IconKind.Line:
                         g.DrawLine(pen, 5, 19, 19, 5);
+                        break;
+
+                    case IconKind.PathArrowStraight:
+                        g.DrawLines(pen, new PointF[] { new(4, 6), new(16, 6), new(16, 14) });
+                        g.FillPolygon(brush, new PointF[] { new(16, 20.5f), new(11.5f, 13.5f), new(20.5f, 13.5f) });
+                        break;
+
+                    case IconKind.PathArrowRounded:
+                        using (var path = new GraphicsPath()) {
+                            path.AddLine(4, 6, 10, 6);
+                            path.AddArc(4, 6, 12, 12, 270, 90);
+                            path.AddLine(16, 12, 16, 14);
+                            g.DrawPath(pen, path);
+                        }
+                        g.FillPolygon(brush, new PointF[] { new(16, 20.5f), new(11.5f, 13.5f), new(20.5f, 13.5f) });
                         break;
 
                     case IconKind.Pixelate:
@@ -111,8 +126,62 @@ namespace Trazo {
                         g.DrawLine(pen, 6, 6, 18, 18);
                         g.DrawLine(pen, 18, 6, 6, 18);
                         break;
+
+                    case IconKind.Update:
+                        // Dos flechas en círculo
+                        g.DrawArc(pen, 5, 5, 14, 14, 200, 130);
+                        g.DrawArc(pen, 5, 5, 14, 14, 20, 130);
+                        g.FillPolygon(brush, new PointF[] { new(20.5f, 6.5f), new(20, 12.5f), new(14.5f, 10) });
+                        g.FillPolygon(brush, new PointF[] { new(3.5f, 17.5f), new(4, 11.5f), new(9.5f, 14) });
+                        break;
+
+                    case IconKind.Help:
+                        g.DrawEllipse(pen, 3.5f, 3.5f, 17, 17);
+                        using (var path = new GraphicsPath()) {
+                            path.AddArc(9, 7, 6, 6, 180, 270);
+                            path.AddLine(12, 13, 12, 14.5f);
+                            g.DrawPath(pen, path);
+                        }
+                        g.FillEllipse(brush, 10.8f, 16.3f, 2.4f, 2.4f);
+                        break;
                 }
             });
+        }
+
+        /// <summary>
+        /// Botón redondo de mover la zona: cristal oscuro como la barra y la cruz de flechas dibujada en vectores,
+        /// centrada exactamente en el círculo (una imagen pequeña se desplaza medio píxel o uno al redondear).
+        /// </summary>
+        /// <param name="highlight">Alfa del resaltado blanco (0 = ninguno).</param>
+        public static void DrawMoveButton(Graphics g, Rectangle r, float scale, int highlight, Color edge) {
+            GraphicsState state = g.Save();
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            // Con medio píxel de desplazamiento las coordenadas son los bordes de los píxeles: el círculo ocupa
+            // exactamente el rectángulo y su centro es el del rectángulo
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+            using (var back = new SolidBrush(Color.FromArgb(225, 24, 24, 26))) g.FillEllipse(back, r);
+            if (highlight > 0) {
+                using var light = new SolidBrush(Color.FromArgb(highlight, 255, 255, 255));
+                g.FillEllipse(light, r);
+            }
+            using (var ring = new Pen(edge, 1f)) g.DrawEllipse(ring, r.X + 0.5f, r.Y + 0.5f, r.Width - 1, r.Height - 1);
+
+            float cx = r.X + r.Width / 2f, cy = r.Y + r.Height / 2f;
+            // Proporcional al círculo, para que la cruz quepa sea cual sea su tamaño
+            float arm = r.Width * 0.26f, head = r.Width * 0.09f;
+            using var pen = new Pen(LightInk, 1.4f * scale) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+            g.DrawLine(pen, cx - arm, cy, cx + arm, cy);
+            g.DrawLine(pen, cx, cy - arm, cx, cy + arm);
+            foreach ((float dx, float dy) in new[] { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f) }) {
+                // Punta en el extremo de cada brazo, abierta hacia el centro
+                float tx = cx + dx * arm, ty = cy + dy * arm;
+                g.DrawLines(pen, new[] {
+                    new PointF(tx - dx * head - dy * head, ty - dy * head - dx * head),
+                    new PointF(tx, ty),
+                    new PointF(tx - dx * head + dy * head, ty - dy * head + dx * head),
+                });
+            }
+            g.Restore(state);
         }
 
         /// <summary>Cuadrado hueco con el color del borde.</summary>

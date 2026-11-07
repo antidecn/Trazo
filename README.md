@@ -19,13 +19,17 @@
 
 - **Captura con un atajo** (por defecto <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd>). Funciona con varios monitores. Doble clic en el icono de la bandeja para abrir la configuración.
 - **Anotaciones** sobre la zona elegida: flechas, líneas, rectángulos, elipses y texto, con color de borde, relleno, grosor, fuente y tamaño.
+- **Pintar flecha**: dibuja a mano el recorrido de una flecha y Trazo lo endereza en tramos rectos, con esquinas en ángulo recto o redondeadas. Está en el mismo botón que la flecha normal: su desplegable elige entre Flecha, Recto y Redondeado.
 - **Pixelar** una parte de la captura para ocultar datos.
 - **Reconocimiento de texto (OCR)**: lee el texto de la zona y lo copia al portapapeles, con el motor de OCR que incluye Windows.
 - **Cuentagotas**: copia el color de cualquier píxel en formato `#RRGGBB`.
 - **Copiar o guardar** la captura con un solo atajo.
-- **Redimensionar la zona** después de elegirla, arrastrando sus bordes o tiradores.
+- **Redimensionar o mover la zona** después de elegirla, arrastrando sus bordes o tiradores, o el botón de mover que aparece junto a una de sus esquinas.
+- **Reglas y guías de alineación** (<kbd>Ctrl</kbd>+<kbd>R</kbd> o desde la configuración): reglas en los bordes de la zona y líneas de color que aparecen al mover o redimensionar un elemento ya dibujado cuando queda centrado o alineado con la zona u otros elementos, a los que se ajusta al pasar cerca. Con <kbd>Alt</kbd> pulsado se mueve libremente.
 - **Esquinas redondeadas y borde** opcionales en la imagen copiada o guardada (tres tamaños de cada uno y el color del borde), desde la configuración.
 - Recuerda la última herramienta y el último estilo usados, y permite cambiar el atajo e iniciar con Windows desde su configuración.
+- **Ayuda y actualizaciones** desde la configuración y el menú de la bandeja: una ventana con todos los atajos de teclado y la búsqueda de una versión nueva.
+- **Aviso de versiones nuevas** (opcional, desactivado por defecto; se elige al instalar y se cambia en la configuración): Trazo lo comprueba como mucho una vez al día, empezando 5 minutos después de arrancar, y muestra un aviso discreto. Nunca se actualiza solo: desde el aviso puedes ver la versión y decidir si instalarla.
 - El icono de la bandeja se adapta a la barra de tareas clara u oscura.
 
 | Cuentagotas | Reconocimiento de texto |
@@ -38,22 +42,25 @@
 |---|---|
 | Hacer una captura | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd> (configurable) |
 | Flecha · Línea · Rectángulo · Elipse · Texto | <kbd>A</kbd> · <kbd>L</kbd> · <kbd>R</kbd> · <kbd>E</kbd> · <kbd>T</kbd> |
+| Pintar flecha (pulsa otra vez para alternar entre recto y redondeado) | <kbd>F</kbd> |
 | Pixelar | <kbd>P</kbd> |
 | Cuentagotas | <kbd>I</kbd> |
 | Leer texto (OCR) | <kbd>O</kbd> |
 | Cambiar el grosor (o el tamaño del texto, con la herramienta Texto o un texto seleccionado) | <kbd>Ctrl</kbd>+rueda del ratón |
 | Mover el elemento seleccionado (4 px) | Flechas |
 | Mover el borde derecho (<kbd>←</kbd>/<kbd>→</kbd>) o inferior (<kbd>↑</kbd>/<kbd>↓</kbd>) del elemento seleccionado (4 px; en un texto, cambia el tamaño de la letra) | <kbd>Mayús</kbd>+flechas |
+| Mostrar u ocultar reglas y guías de alineación | <kbd>Ctrl</kbd>+<kbd>R</kbd> |
 | Deshacer | <kbd>Ctrl</kbd>+<kbd>Z</kbd> |
 | Borrar el elemento seleccionado | <kbd>Supr</kbd> |
+| Duplicar el elemento seleccionado | <kbd>Ctrl</kbd>+<kbd>D</kbd> |
 | Copiar y cerrar | <kbd>Ctrl</kbd>+<kbd>C</kbd> o <kbd>Intro</kbd> |
 | Copiar el color bajo el cursor y cerrar (antes de elegir zona) | <kbd>Ctrl</kbd>+<kbd>C</kbd> |
 | Guardar como imagen | <kbd>Ctrl</kbd>+<kbd>S</kbd> |
 | Cerrar sin guardar | <kbd>Esc</kbd> |
 
-Con <kbd>Mayús</kbd> las flechas y líneas quedan horizontales o verticales, los rectángulos cuadrados y las elipses círculos.
+Con <kbd>Mayús</kbd> las flechas y líneas quedan horizontales o verticales, los rectángulos cuadrados y las elipses círculos. Al pintar una flecha, <kbd>Mayús</kbd> hace que todos los tramos sean horizontales o verticales, sin diagonales.
 
-Para mover un elemento, haz doble clic sobre él para seleccionarlo y arrástralo (o mantén pulsado el segundo clic y arrastra). Un rectángulo, elipse o zona pixelada seleccionada muestra 8 tiradores, y una flecha o línea uno en cada extremo: arrástralos para cambiar su tamaño o dirección. Doble clic en un texto ya seleccionado para editarlo.
+Para mover un elemento, haz doble clic sobre él para seleccionarlo y arrástralo (o mantén pulsado el segundo clic y arrastra). Un rectángulo, elipse o zona pixelada seleccionada muestra 8 tiradores, una flecha o línea uno en cada extremo y una flecha pintada uno en cada punto clave: arrástralos para cambiar su tamaño o dirección (en una flecha pintada, los tramos horizontales y verticales lo siguen siendo). Doble clic en un texto ya seleccionado para editarlo.
 
 ## Instalación
 

@@ -17,6 +17,10 @@ namespace Trazo {
         private CaptureOverlay? overlay;
         private SettingsForm? settingsForm;
         private readonly ToolStripMenuItem updateItem;
+        private ShortcutsForm? shortcutsForm;
+        private bool checkingUpdates;
+        /// <summary>Trazo se está cerrando (por ejemplo, para instalar una actualización).</summary>
+        private bool exiting;
 
         public TrayContext() {
             // Mismo tamaño para las dos: el de la bandeja y el de la barra de título con el escalado actual
@@ -28,12 +32,18 @@ namespace Trazo {
 
             // Una actualización del instalador vuelve a crear el inicio automático: se respeta lo elegido
             if (!settings.StartWithWindows) Autostart.Set(false);
+            ApplyInstallerUpdateChoice();
 
-            var menu = new ContextMenuStrip();
-            menu.Items.Add("Configuración…", null, (_, _) => OpenSettings());
-            updateItem = (ToolStripMenuItem)menu.Items.Add("Buscar actualizaciones…", null, (_, _) => CheckForUpdates());
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("Salir", null, (_, _) => ExitThread());
+            // Mismo estilo oscuro que la configuración y la barra de la captura
+            ContextMenuStrip menu = DarkMenu.Create();
+            using (Icon logo = Icons.AppIcon(DarkMenu.TrailingSize(menu))) {
+                // Con el logo de Trazo a la derecha
+                DarkMenu.AddItem(menu, "Configuración…", OpenSettings, logo.ToBitmap());
+            }
+            DarkMenu.AddItem(menu, "Atajos de teclado", ShowShortcuts);
+            updateItem = DarkMenu.AddItem(menu, "Buscar actualizaciones…", () => _ = CheckForUpdatesAsync());
+            DarkMenu.AddSeparator(menu);
+            DarkMenu.AddItem(menu, "Salir", ExitThread);
 
             trayIcon = new NotifyIcon {
                 Icon = trayImage,
@@ -71,6 +81,9 @@ namespace Trazo {
                 ReleaseMemory();
             };
             startupTrim.Start();
+
+            updateTimer.Tick += OnUpdateTimer;
+            updateTimer.Start();
         }
 
         /// <summary>Modo claro u oscuro de la barra de tareas (independiente del de las aplicaciones).</summary>
@@ -102,7 +115,7 @@ namespace Trazo {
         }
 
         private void StartCapture() {
-            if (settingsForm != null) return;
+            // Con la configuración abierta también se puede capturar (por ejemplo, la propia ventana)
             if (overlay != null) {
                 overlay.Activate();
                 return;
@@ -136,10 +149,19 @@ namespace Trazo {
             }
             overlay?.Close();
 
-            // Se libera el atajo mientras se elige otro, para poder pulsarlo en el cuadro
-            hotkeys.Unregister();
-            using (settingsForm = new SettingsForm(settings.Hotkey, Autostart.IsEnabled, settings, icon, hotkeys.Register)) {
-                if (settingsForm.ShowDialog() == DialogResult.OK) {
+            // El atajo sigue activo con la ventana abierta; solo se libera mientras se escribe uno nuevo en el cuadro,
+            // para poder pulsarlo allí
+            void Suspend() => hotkeys.Unregister();
+            void Resume() {
+                if (hotkeys.Register(settings.Hotkey)) UpdateTrayText();
+                else trayIcon.Text = "Trazo (atajo no disponible)";
+            }
+            using (settingsForm = new SettingsForm(settings.Hotkey, Autostart.IsEnabled, settings, icon, hotkeys.Register, Suspend, Resume,
+                                                       CheckForUpdatesAsync)) {
+                DialogResult result = settingsForm.ShowDialog();
+                // Se ha cerrado para instalar una actualización: ya no queda nada que guardar ni atajo que recuperar
+                if (exiting) return;
+                if (result == DialogResult.OK) {
                     settings.Hotkey = settingsForm.Hotkey;
                     settings.StartWithWindows = settingsForm.StartWithWindows;
                     settings.RoundCorners = settingsForm.RoundCorners;
@@ -147,26 +169,31 @@ namespace Trazo {
                     settings.AddBorder = settingsForm.AddBorder;
                     settings.BorderColorValue = settingsForm.BorderColor;
                     settings.BorderWidth = settingsForm.BorderWidth;
+                    settings.ShowGuides = settingsForm.ShowGuides;
+                    settings.NotifyUpdates = settingsForm.NotifyUpdates;
                     Autostart.Set(settings.StartWithWindows);
                     settings.Save();
-                    UpdateTrayText();
-                } else if (!hotkeys.Register(settings.Hotkey)) {
-                    trayIcon.Text = "Trazo (atajo no disponible)";
                 }
+                // Al cerrar, el cuadro del atajo pierde el foco y puede haber vuelto a poner el anterior:
+                // queda el que corresponde (el nuevo al guardar, el de antes al cancelar)
+                Resume();
             }
             settingsForm = null;
             ReleaseMemory();
         }
 
         /// <summary>Solo a petición del usuario: Trazo nunca busca actualizaciones por su cuenta.</summary>
-        private async void CheckForUpdates() {
-            if (!updateItem.Enabled) return;
+        /// <returns>Se completa al terminar la búsqueda (y, si la hay, la pregunta de si instalarla).</returns>
+        private async Task CheckForUpdatesAsync() {
+            if (checkingUpdates) return;
+            checkingUpdates = true;
             updateItem.Enabled = false;
             updateItem.Text = "Buscando actualizaciones…";
             bool installing = false;
             try {
                 installing = await Updater.CheckAsync();
             } finally {
+                checkingUpdates = false;
                 updateItem.Text = "Buscar actualizaciones…";
                 updateItem.Enabled = true;
             }
@@ -175,9 +202,99 @@ namespace Trazo {
             else ReleaseMemory();
         }
 
+        // ───────────────────────────── Aviso de versión nueva ─────────────────────────────
+
+        /// <summary>Primera comprobación: unos minutos después de arrancar, para no competir con el inicio de Windows.</summary>
+        private const int FirstCheckDelayMs = 5 * 60 * 1000;
+        /// <summary>Después, cada hora se mira si ya toca (como mucho una comprobación al día).</summary>
+        private const int RecheckIntervalMs = 60 * 60 * 1000;
+        private static readonly TimeSpan CheckEvery = TimeSpan.FromDays(1);
+
+        private readonly System.Windows.Forms.Timer updateTimer = new() { Interval = FirstCheckDelayMs };
+        private UpdateToast? updateToast;
+
+        /// <summary>
+        /// El instalador pregunta si avisar de las versiones nuevas y deja la respuesta en el registro.
+        /// Se pasa a la configuración y se borra: a partir de ahí manda lo que se elija en Configuración.
+        /// </summary>
+        private void ApplyInstallerUpdateChoice() {
+            try {
+                using RegistryKey? key = Registry.CurrentUser.OpenSubKey(@"Software\Trazo", writable: true);
+                if (key?.GetValue("NotifyUpdates") is not string choice) return;
+                settings.NotifyUpdates = choice == "1";
+                settings.Save();
+                key.DeleteValue("NotifyUpdates", throwOnMissingValue: false);
+            } catch (Exception) {
+                // Sin permisos o configuración ilegible: se queda lo que hubiera
+            }
+        }
+
+        /// <summary>
+        /// Cada hora (la primera vez, a los 5 minutos de arrancar): si están activados los avisos y hace más de un día
+        /// de la última comprobación, consulta en segundo plano la última versión y avisa si es nueva.
+        /// No descarga ni instala nada.
+        /// </summary>
+        private async void OnUpdateTimer(object? sender, EventArgs e) {
+            updateTimer.Interval = RecheckIntervalMs;
+            if (!settings.NotifyUpdates || checkingUpdates || exiting) return;
+            // Con una captura abierta se deja para la próxima vez
+            if (overlay != null) return;
+            if (DateTime.TryParse(settings.LastUpdateCheck, null, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime last)
+                && DateTime.UtcNow - last < CheckEvery) return;
+
+            checkingUpdates = true;
+            Version? latest;
+            try {
+                latest = await Updater.GetLatestVersionQuietlyAsync();
+            } finally {
+                checkingUpdates = false;
+            }
+            ReleaseMemory();
+            // Sin conexión: se vuelve a intentar dentro de una hora
+            if (latest == null || exiting) return;
+
+            settings.LastUpdateCheck = DateTime.UtcNow.ToString("o");
+            bool isNew = latest > Updater.CurrentVersion && settings.NotifiedVersion != latest.ToString();
+            if (isNew) settings.NotifiedVersion = latest.ToString();
+            try {
+                settings.Save();
+            } catch (Exception) {
+                // Sin poder guardar, como mucho se vuelve a comprobar o avisar en el próximo arranque
+            }
+            if (isNew) ShowUpdateToast(latest);
+        }
+
+        private void ShowUpdateToast(Version latest) {
+            updateToast?.Close();
+            updateToast = new UpdateToast(latest, Updater.CurrentVersion);
+            // "Ver la versión": el mismo camino que "Buscar actualizaciones…", que pregunta antes de descargar nada
+            updateToast.ViewRequested += () => _ = CheckForUpdatesAsync();
+            updateToast.FormClosed += (_, _) => updateToast = null;
+            updateToast.Show();
+        }
+
+        /// <summary>Ventana con los atajos de teclado; una sola aunque se pida varias veces.</summary>
+        private void ShowShortcuts() {
+            if (shortcutsForm != null) {
+                shortcutsForm.Activate();
+                return;
+            }
+            shortcutsForm = new ShortcutsForm(settings.Hotkey, icon);
+            // Abierta con Show: al cerrarla se libera sola
+            shortcutsForm.FormClosed += (_, _) => {
+                shortcutsForm = null;
+                ReleaseMemory();
+            };
+            shortcutsForm.Show();
+        }
+
         protected override void ExitThreadCore() {
+            exiting = true;
             overlay?.Close();
+            shortcutsForm?.Close();
             settingsForm?.Close();
+            updateTimer.Dispose();
+            updateToast?.Close();
             hotkeys.Dispose();
             // Evento estático: sin quitarlo, mantendría vivo este objeto
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;

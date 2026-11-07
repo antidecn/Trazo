@@ -12,7 +12,7 @@ namespace Trazo {
     internal sealed class CaptureOverlay : Form {
 
         private enum Phase { Selecting, Editing }
-        private enum Tool { Arrow, Line, Rectangle, Ellipse, Text, Pixelate, Picker }
+        private enum Tool { Arrow, PathArrow, Line, Rectangle, Ellipse, Text, Pixelate, Picker }
 
         /// <summary>Lados de la zona que se arrastran al redimensionarla (dos a la vez en las esquinas).</summary>
         [Flags]
@@ -49,6 +49,12 @@ namespace Trazo {
         private Rectangle selection;
         private Point? selectStart;
         private Edge resizing;
+        // Botón para mover la zona entera: esquina elegida (0 arriba izq., 1 arriba der., 2 abajo izq., 3 abajo der.)
+        // y si va dentro de la zona porque fuera no cabe
+        private bool movingSelection;
+        private int moveCorner;
+        private bool moveInside;
+        private bool moveHover;
         private Rectangle resizeOrigin;
         private Point resizeStart;
         private const int MinSelection = 8;
@@ -60,7 +66,9 @@ namespace Trazo {
         private Shape? selected;
         private bool moving;
         private bool movedSinceDown;
-        private Point dragLast;
+        // Arrastre del elemento seleccionado: dónde empezó y cuánto se ha movido ya (con el ajuste a las guías)
+        private Point moveStart;
+        private Point moveApplied;
         // Redimensionado del elemento seleccionado con sus tiradores
         private Edge shapeResize;
         private Rectangle shapeOrigin;
@@ -101,6 +109,11 @@ namespace Trazo {
 
         private readonly ToolStrip toolbar;
         private readonly Dictionary<Tool, ToolStripButton> toolButtons = new();
+        // Pintar flecha: el botón activa la herramienta y su desplegable elige recto o redondeado
+        private ToolStripSplitButton arrowButton = null!;
+        private bool pathRounded;
+        /// <summary>Última flecha elegida (normal o pintada): la que activa el botón.</summary>
+        private Tool arrowTool;
         private ToolStripButton strokeButton = null!;
         private ToolStripDropDownButton fillButton = null!;
         private ToolStripDropDownButton widthButton = null!;
@@ -127,6 +140,10 @@ namespace Trazo {
             strokeWidth = Widths.Contains(settings.StrokeWidth) ? settings.StrokeWidth : 3;
             textFont = string.IsNullOrWhiteSpace(settings.TextFont) ? TextShape.DefaultFontFamily : settings.TextFont;
             textSize = MathUtil.Clamp(settings.TextSize, MinTextSize, MaxTextSize);
+            pathRounded = settings.PathArrowRounded;
+            // Configuraciones anteriores no guardaban la última flecha: entonces se deduce de la última herramienta
+            string lastArrow = string.IsNullOrEmpty(settings.LastArrowTool) ? settings.LastTool : settings.LastArrowTool;
+            arrowTool = lastArrow == nameof(Tool.PathArrow) ? Tool.PathArrow : Tool.Arrow;
             dimmed = CreateDimmed(screenshot);
 
             scale = DeviceDpi / 96f;
@@ -136,6 +153,7 @@ namespace Trazo {
             cardTitleFont = new Font("Segoe UI Semibold", 12f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
             cardBodyFont = new Font("Segoe UI", 13.5f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
             cardFootFont = new Font("Segoe UI", 11f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+            showGuides = settings.ShowGuides;
 
             AutoScaleMode = AutoScaleMode.None;
             FormBorderStyle = FormBorderStyle.None;
@@ -312,7 +330,31 @@ namespace Trazo {
 
             AddTool(Tool.Rectangle, IconKind.Rectangle, "Rectángulo (R)\nMayús: cuadrado");
             AddTool(Tool.Ellipse, IconKind.Ellipse, "Elipse (E)\nMayús: círculo");
-            AddTool(Tool.Arrow, IconKind.Arrow, "Flecha (A)\nMayús: horizontal / vertical");
+            arrowButton = new ToolStripSplitButton {
+                DisplayStyle = ToolStripItemDisplayStyle.Image,
+                ToolTipText = "Flechas\nFlecha (A) · Mayús: horizontal / vertical\n" +
+                              "Pintar flecha (F): dibuja el recorrido a mano y Trazo lo endereza\n" +
+                              "F otra vez: recto / redondeado · Mayús: sin diagonales",
+                AutoToolTip = false,
+                Padding = new Padding((int)Math.Round(4 * scale)),
+                Margin = new Padding(1, 0, 1, 0),
+                DropDownButtonWidth = (int)Math.Round(12 * scale),
+            };
+            // El botón vuelve a la última flecha usada; el desplegable elige entre las tres
+            arrowButton.ButtonClick += (_, _) => SetTool(arrowTool);
+            var simple = new ToolStripMenuItem("Flecha", Icons.Create(IconKind.Arrow, iconSize, Icons.DarkInk)) { Tag = ArrowMode.Simple };
+            simple.Click += (_, _) => SetTool(Tool.Arrow);
+            arrowButton.DropDownItems.Add(simple);
+            foreach (bool rounded in new[] { false, true }) {
+                var item = new ToolStripMenuItem(rounded ? "Redondeado" : "Recto",
+                    Icons.Create(rounded ? IconKind.PathArrowRounded : IconKind.PathArrowStraight, iconSize, Icons.DarkInk)) {
+                    Tag = rounded ? ArrowMode.Rounded : ArrowMode.Straight,
+                };
+                item.Click += (_, _) => SetPathMode(rounded);
+                arrowButton.DropDownItems.Add(item);
+            }
+            strip.Items.Add(arrowButton);
+            UpdateArrowButton();
             AddTool(Tool.Line, IconKind.Line, "Línea (L)\nMayús: horizontal / vertical");
             AddTool(Tool.Text, IconKind.Text, "Texto (T)\nIntro: aceptar · Mayús+Intro: nueva línea\nDoble clic en un texto seleccionado para editarlo");
             strip.Items.Add(new ToolStripSeparator());
@@ -400,7 +442,35 @@ namespace Trazo {
         }
 
         private void SetFill(Shape s) {
-            if (s is not SegmentShape and not PixelateShape) s.Fill = fillColor;
+            if (s is not SegmentShape and not PixelateShape and not PathArrowShape) s.Fill = fillColor;
+        }
+
+        /// <summary>Pintar flecha en recto o redondeado; también cambia la flecha pintada que esté seleccionada.</summary>
+        private void SetPathMode(bool rounded) {
+            if (selected is PathArrowShape) ApplyStyleToSelected(s => ((PathArrowShape)s).Rounded = rounded);
+            pathRounded = rounded;
+            if (settings.PathArrowRounded != rounded) {
+                settings.PathArrowRounded = rounded;
+                settingsChanged = true;
+            }
+            UpdateArrowButton();
+            if (tool != Tool.PathArrow) SetTool(Tool.PathArrow);
+        }
+
+        private enum ArrowMode { Simple, Straight, Rounded }
+
+        private ArrowMode CurrentArrowMode => arrowTool == Tool.Arrow ? ArrowMode.Simple : pathRounded ? ArrowMode.Rounded : ArrowMode.Straight;
+
+        /// <summary>El icono del botón de flechas es el de la última flecha usada, que queda marcada en el desplegable.</summary>
+        private void UpdateArrowButton() {
+            ArrowMode mode = CurrentArrowMode;
+            arrowButton.Image?.Dispose();
+            arrowButton.Image = Icons.Create(mode switch {
+                ArrowMode.Simple => IconKind.Arrow,
+                ArrowMode.Rounded => IconKind.PathArrowRounded,
+                _ => IconKind.PathArrowStraight,
+            }, iconSize, Icons.LightInk);
+            foreach (ToolStripMenuItem item in arrowButton.DropDownItems) item.Checked = item.Tag is ArrowMode m && m == mode;
         }
 
         private void SetTextFont(string family) {
@@ -497,7 +567,7 @@ namespace Trazo {
         }
 
         /// <summary>Herramientas que se recuerdan entre capturas; el cuentagotas y Pixelar, no.</summary>
-        private static bool IsDrawingTool(Tool t) => t is Tool.Arrow or Tool.Line or Tool.Rectangle or Tool.Ellipse or Tool.Text;
+        private static bool IsDrawingTool(Tool t) => t is Tool.Arrow or Tool.PathArrow or Tool.Line or Tool.Rectangle or Tool.Ellipse or Tool.Text;
 
         private void SetTool(Tool t) {
             CommitText();
@@ -505,6 +575,19 @@ namespace Trazo {
             if (t != tool) Deselect();
             tool = t;
             foreach (KeyValuePair<Tool, ToolStripButton> pair in toolButtons) pair.Value.Checked = pair.Key == t;
+            if (t is Tool.Arrow or Tool.PathArrow) {
+                if (t != arrowTool) {
+                    arrowTool = t;
+                    UpdateArrowButton();
+                }
+                // Se recuerda aparte para que el botón la siga mostrando aunque luego se use otra herramienta
+                if (settings.LastArrowTool != t.ToString()) {
+                    settings.LastArrowTool = t.ToString();
+                    settingsChanged = true;
+                }
+            }
+            // El botón partido no tiene estado marcado: el renderizador lo resalta según la herramienta
+            arrowButton.Invalidate();
             if (IsDrawingTool(t) && settings.LastTool != t.ToString()) {
                 settings.LastTool = t.ToString();
                 settingsChanged = true;
@@ -628,6 +711,14 @@ namespace Trazo {
                 DrawHighlight(e.Graphics, e.Item, e.Item.Pressed ? 75 : e.Item.Selected ? 35 : 0);
             }
 
+            protected override void OnRenderSplitButtonBackground(ToolStripItemRenderEventArgs e) {
+                if (e.ToolStrip is ToolStripDropDown) { base.OnRenderSplitButtonBackground(e); return; }
+                var button = (ToolStripSplitButton)e.Item;
+                bool active = button == owner.arrowButton && owner.tool is Tool.Arrow or Tool.PathArrow;
+                DrawHighlight(e.Graphics, e.Item, button.ButtonPressed || button.DropDownButtonPressed ? 75 : active ? 60 : button.Selected ? 35 : 0);
+                DrawArrow(new ToolStripArrowRenderEventArgs(e.Graphics, button, button.DropDownButtonBounds, Icons.LightInk, ArrowDirection.Down));
+            }
+
             private void DrawHighlight(Graphics g, ToolStripItem item, int alpha) {
                 if (alpha == 0) return;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -694,6 +785,8 @@ namespace Trazo {
                 foreach (Shape s in shapes) s.Draw(g);
                 drawing?.Draw(g);
                 editingText?.Draw(g);
+                DrawGuides(g);
+                if (ShowRulers) DrawRulers(g, insidePass: true);
                 g.Restore(state);
 
                 if (editingText != null && textEditor != null) DrawTextEditing(g, editingText, textEditor.SelectionStart);
@@ -705,8 +798,10 @@ namespace Trazo {
                 }
 
                 DrawSelectionFrame(g);
+                if (ShowRulers) DrawRulers(g, insidePass: false);
 
                 if (phase == Phase.Editing) DrawHandles(g);
+                DrawMoveHandle(g);
                 DrawHandles(g, ShapeHandlePoints(selected));
                 if (phase == Phase.Selecting || resizing != Edge.None) DrawSizeLabel(g);
             }
@@ -920,6 +1015,234 @@ namespace Trazo {
             Invalidate(r);
         }
 
+        // ───────────────────────────── Reglas y guías ─────────────────────────────
+
+        private static readonly Color GuideColor = Color.FromArgb(255, 60, 170);
+        private static readonly Color RulerBack = Color.FromArgb(200, 24, 24, 26);
+
+        /// <summary>Reglas y guías activadas (Ctrl+R o la configuración).</summary>
+        private bool showGuides;
+        /// <summary>Guías que se ven mientras se arrastra: posiciones X de las verticales e Y de las horizontales.</summary>
+        private readonly List<int> guideXs = new(), guideYs = new();
+        /// <summary>Líneas a las que se ajusta el arrastre en curso; se calculan una vez por arrastre.</summary>
+        private (Shape? exclude, int[] xs, int[] ys)? snapTargets;
+
+        private int RulerSize => (int)Math.Round(9 * scale);
+        private int SnapDistance => (int)Math.Round(6 * scale);
+
+        private bool ShowRulers => showGuides && phase == Phase.Editing && selection.Width > RulerSize * 3 && selection.Height > RulerSize * 3;
+
+        /// <summary>Con Alt pulsado se mueve y dibuja libremente, sin ajustarse a las guías.</summary>
+        private bool SnapEnabled => showGuides && phase == Phase.Editing && (ModifierKeys & Keys.Alt) == 0;
+
+        private void ToggleGuides() {
+            showGuides = !showGuides;
+            if (settings.ShowGuides != showGuides) {
+                settings.ShowGuides = showGuides;
+                settingsChanged = true;
+            }
+            SetGuides(null, null);
+            if (!selection.IsEmpty) InvalidateSelectionChange(selection, selection);
+            ShowStatus(showGuides ? "Reglas y guías activadas · Alt: mover sin ajustar" : "Reglas y guías desactivadas");
+        }
+
+        /// <summary>Rectángulo con el que se alinea un elemento: su contorno sin el margen del trazo.</summary>
+        private static Rectangle AlignBox(Shape s) => s switch {
+            BoxShape box => box.Rect,
+            SegmentShape segment => Normalize(segment.Start, segment.End),
+            PathArrowShape path => Rectangle.FromLTRB(path.Points.Min(p => p.X), path.Points.Min(p => p.Y),
+                                                      path.Points.Max(p => p.X), path.Points.Max(p => p.Y)),
+            _ => s.Bounds,
+        };
+
+        /// <summary>Inicio, centro y final de un tramo.</summary>
+        private static int[] Lines(int start, int size) => new[] { start, start + size / 2, start + size };
+
+        /// <summary>
+        /// Bordes y centros de la zona y de los demás elementos: las líneas a las que se ajusta lo que se mueve.
+        /// </summary>
+        private (int[] xs, int[] ys) SnapTargets(Shape? exclude) {
+            if (snapTargets is { } cached && cached.exclude == exclude) return (cached.xs, cached.ys);
+            var xs = new List<int>(Lines(selection.X, selection.Width));
+            var ys = new List<int>(Lines(selection.Y, selection.Height));
+            foreach (Shape s in shapes) {
+                if (s == exclude) continue;
+                Rectangle b = AlignBox(s);
+                xs.AddRange(Lines(b.X, b.Width));
+                ys.AddRange(Lines(b.Y, b.Height));
+            }
+            snapTargets = (exclude, xs.ToArray(), ys.ToArray());
+            return (snapTargets.Value.xs, snapTargets.Value.ys);
+        }
+
+        /// <summary>Desplazamiento que lleva el valor más próximo a una de las líneas, o 0 si ninguna está cerca.</summary>
+        private int BestSnap(int[] values, int[] targets) {
+            int best = 0, bestDistance = int.MaxValue;
+            foreach (int v in values) {
+                foreach (int t in targets) {
+                    int d = Math.Abs(t - v);
+                    if (d < bestDistance) { bestDistance = d; best = t - v; }
+                }
+            }
+            return bestDistance <= SnapDistance ? best : 0;
+        }
+
+        private Point SnapPoint(Point p, Shape? exclude) {
+            if (!SnapEnabled) return p;
+            var (xs, ys) = SnapTargets(exclude);
+            return new Point(p.X + BestSnap(new[] { p.X }, xs), p.Y + BestSnap(new[] { p.Y }, ys));
+        }
+
+        private int SnapValue(int v, Shape? exclude, bool vertical) {
+            if (!SnapEnabled) return v;
+            var (xs, ys) = SnapTargets(exclude);
+            return v + BestSnap(new[] { v }, vertical ? xs : ys);
+        }
+
+        /// <summary>Desplazamiento que alinea un borde o el centro del rectángulo con alguna línea, y muestra las guías.</summary>
+        private Point SnapBox(Rectangle box, Shape? exclude) {
+            if (!SnapEnabled) {
+                SetGuides(null, null);
+                return Point.Empty;
+            }
+            var (xs, ys) = SnapTargets(exclude);
+            int dx = BestSnap(Lines(box.X, box.Width), xs);
+            int dy = BestSnap(Lines(box.Y, box.Height), ys);
+            box.Offset(dx, dy);
+            MarkGuides(Lines(box.X, box.Width), Lines(box.Y, box.Height), exclude);
+            return new Point(dx, dy);
+        }
+
+        /// <summary>Muestra como guía cada valor que coincide exactamente con una línea.</summary>
+        private void MarkGuides(IEnumerable<int> x, IEnumerable<int> y, Shape? exclude) {
+            if (!SnapEnabled) {
+                SetGuides(null, null);
+                return;
+            }
+            var (xs, ys) = SnapTargets(exclude);
+            SetGuides(x.Where(xs.Contains), y.Where(ys.Contains));
+        }
+
+        private void SetGuides(IEnumerable<int>? xs, IEnumerable<int>? ys) {
+            List<int> nx = xs?.Distinct().OrderBy(v => v).ToList() ?? new List<int>();
+            List<int> ny = ys?.Distinct().OrderBy(v => v).ToList() ?? new List<int>();
+            if (nx.SequenceEqual(guideXs) && ny.SequenceEqual(guideYs)) return;
+            InvalidateGuides();
+            guideXs.Clear();
+            guideXs.AddRange(nx);
+            guideYs.Clear();
+            guideYs.AddRange(ny);
+            InvalidateGuides();
+        }
+
+        /// <summary>Al terminar un arrastre: fuera guías y las líneas se vuelven a calcular en el siguiente.</summary>
+        private void EndSnapping() {
+            SetGuides(null, null);
+            snapTargets = null;
+        }
+
+        private void InvalidateGuides() {
+            foreach (int x in guideXs) Invalidate(new Rectangle(x - 2, selection.Top, 5, selection.Height));
+            foreach (int y in guideYs) Invalidate(new Rectangle(selection.Left, y - 2, selection.Width, 5));
+        }
+
+        /// <summary>Líneas de color de lado a lado de la zona donde el elemento queda alineado o centrado.</summary>
+        private void DrawGuides(Graphics g) {
+            if (guideXs.Count == 0 && guideYs.Count == 0) return;
+            g.SmoothingMode = SmoothingMode.None;
+            using var pen = new Pen(GuideColor, 1);
+            foreach (int x in guideXs) {
+                int gx = Math.Min(x, selection.Right - 1);
+                g.DrawLine(pen, gx, selection.Top, gx, selection.Bottom - 1);
+            }
+            foreach (int y in guideYs) {
+                int gy = Math.Min(y, selection.Bottom - 1);
+                g.DrawLine(pen, selection.Left, gy, selection.Right - 1, gy);
+            }
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+        }
+
+        /// <summary>
+        /// Reglas de arriba y de la izquierda. Cada una va por fuera de la zona si cabe en su monitor;
+        /// si no (por ejemplo, con la pantalla completa), por dentro.
+        /// </summary>
+        private (Rectangle top, bool topInside, Rectangle left, bool leftInside) RulerLayout() {
+            int size = RulerSize;
+            var monitorRect = selection;
+            monitorRect.Offset(virtualBounds.Location);
+            Rectangle monitor = System.Windows.Forms.Screen.FromRectangle(monitorRect).Bounds;
+            monitor.Offset(-virtualBounds.X, -virtualBounds.Y);
+
+            bool topInside = selection.Top - size < monitor.Top;
+            bool leftInside = selection.Left - size < monitor.Left;
+            Rectangle top = new(selection.X, topInside ? selection.Y : selection.Y - size, selection.Width, size);
+            Rectangle left = new(leftInside ? selection.X : selection.X - size, selection.Y, size, selection.Height);
+            // Las dos por dentro se cruzan en la esquina: se la queda la de arriba
+            if (topInside && leftInside) left = Rectangle.FromLTRB(left.Left, top.Bottom, left.Right, left.Bottom);
+            return (top, topInside, left, leftInside);
+        }
+
+        /// <summary>Repinta el trozo de las reglas entre esas coordenadas (horizontal en la de arriba, vertical en la de la izquierda).</summary>
+        private void InvalidateRulerSpan(int x0, int x1, int y0, int y1) {
+            if (!ShowRulers) return;
+            var (top, _, left, _) = RulerLayout();
+            Rectangle t = Rectangle.Intersect(Rectangle.FromLTRB(x0, top.Top, x1, top.Bottom), top);
+            Rectangle l = Rectangle.Intersect(Rectangle.FromLTRB(left.Left, y0, left.Right, y1), left);
+            if (!t.IsEmpty) Invalidate(t);
+            if (!l.IsEmpty) Invalidate(l);
+        }
+
+        /// <summary>
+        /// Reglas en los bordes superior e izquierdo de la zona, con marcas cada 10 px desde su esquina
+        /// y la posición del ratón. Se pintan en dos pasadas: las de dentro antes del borde de la zona
+        /// (para respetar sus esquinas redondeadas) y las de fuera después.
+        /// </summary>
+        private void DrawRulers(Graphics g, bool insidePass) {
+            var (top, topInside, left, leftInside) = RulerLayout();
+            bool drawTop = topInside == insidePass, drawLeft = leftInside == insidePass;
+            if (!drawTop && !drawLeft) return;
+
+            int size = RulerSize;
+            // Con las dos por dentro, la de la izquierda tapa el principio de la de arriba
+            int firstX = topInside && leftInside ? left.Right : selection.X;
+            g.SmoothingMode = SmoothingMode.None;
+            using (var back = new SolidBrush(RulerBack)) {
+                if (drawTop) g.FillRectangle(back, top);
+                if (drawLeft) g.FillRectangle(back, left);
+            }
+
+            // Marcas cada 10 px, más largas cada 50 y cada 100, pegadas al lado de la regla que da a la captura
+            using var tick = new Pen(Color.FromArgb(130, 255, 255, 255), 1);
+            int TickLength(int i) => i % 100 == 0 ? size * 8 / 10 : i % 50 == 0 ? size / 2 : Math.Max(2, size * 3 / 10);
+            if (drawTop) {
+                for (int i = 10; i < selection.Width; i += 10) {
+                    int x = selection.X + i;
+                    if (x < firstX) continue;
+                    g.DrawLine(tick, x, top.Bottom - TickLength(i), x, top.Bottom - 1);
+                }
+            }
+            if (drawLeft) {
+                for (int i = 10; i < selection.Height; i += 10) {
+                    int y = selection.Y + i;
+                    if (y < left.Top) continue;
+                    g.DrawLine(tick, left.Right - TickLength(i), y, left.Right - 1, y);
+                }
+            }
+
+            // Por dentro, una línea separa la regla de la captura; por fuera ya está el borde de la zona
+            using (var edge = new Pen(GlassEdge, 1)) {
+                if (drawTop && topInside) g.DrawLine(edge, firstX, top.Bottom - 1, top.Right - 1, top.Bottom - 1);
+                if (drawLeft && leftInside) g.DrawLine(edge, left.Right - 1, left.Top, left.Right - 1, left.Bottom - 1);
+            }
+
+            // Posición del ratón
+            if (selection.Contains(mouse)) {
+                using var cursor = new Pen(Accent, 1);
+                if (drawTop && mouse.X >= firstX) g.DrawLine(cursor, mouse.X, top.Top, mouse.X, top.Bottom - 1);
+                if (drawLeft && mouse.Y >= left.Top) g.DrawLine(cursor, left.Left, mouse.Y, left.Right - 1, mouse.Y);
+            }
+        }
+
         // ───────────────────────────── Vista previa del OCR ─────────────────────────────
 
         private int CardPadding => (int)(14 * scale);
@@ -999,6 +1322,17 @@ namespace Trazo {
 
             HideOcrPreview();
             if (e.Button != MouseButtons.Left) return;
+            snapTargets = null;
+
+            // Botón de mover: se arrastra la zona entera
+            if (OnMoveHandle(e.Location)) {
+                movingSelection = true;
+                resizeOrigin = selection;
+                resizeStart = e.Location;
+                toolbar.Visible = false;
+                InvalidateSelectionChange(selection, selection);
+                return;
+            }
 
             // Tiradores del elemento seleccionado: se redimensiona ese elemento
             Edge handle = ShapeHandleAt(e.Location);
@@ -1030,25 +1364,31 @@ namespace Trazo {
             }
             Deselect();
 
+            // El ajuste a las guías solo se aplica al mover el elemento ya dibujado, no al dibujarlo
+            Point start = e.Location;
             switch (tool) {
                 case Tool.Arrow:
-                    drawing = new ArrowShape { Start = e.Location, End = e.Location, Stroke = strokeColor, Width = strokeWidth };
+                    drawing = new ArrowShape { Start = start, End = start, Stroke = strokeColor, Width = strokeWidth };
+                    break;
+
+                case Tool.PathArrow:
+                    drawing = new PathArrowShape(e.Location) { Stroke = strokeColor, Width = strokeWidth, Rounded = pathRounded };
                     break;
 
                 case Tool.Line:
-                    drawing = new LineShape { Start = e.Location, End = e.Location, Stroke = strokeColor, Width = strokeWidth };
+                    drawing = new LineShape { Start = start, End = start, Stroke = strokeColor, Width = strokeWidth };
                     break;
 
                 case Tool.Pixelate:
-                    drawing = new PixelateShape(screenshot) { Start = e.Location, End = e.Location };
+                    drawing = new PixelateShape(screenshot) { Start = start, End = start };
                     break;
 
                 case Tool.Rectangle:
-                    drawing = new RectangleShape { Start = e.Location, End = e.Location, Stroke = strokeColor, Fill = fillColor, Width = strokeWidth };
+                    drawing = new RectangleShape { Start = start, End = start, Stroke = strokeColor, Fill = fillColor, Width = strokeWidth };
                     break;
 
                 case Tool.Ellipse:
-                    drawing = new EllipseShape { Start = e.Location, End = e.Location, Stroke = strokeColor, Fill = fillColor, Width = strokeWidth };
+                    drawing = new EllipseShape { Start = start, End = start, Stroke = strokeColor, Fill = fillColor, Width = strokeWidth };
                     break;
 
                 case Tool.Text:
@@ -1117,7 +1457,7 @@ namespace Trazo {
         protected override void OnMouseDoubleClick(MouseEventArgs e) {
             base.OnMouseDoubleClick(e);
             if (phase != Phase.Editing || textEditor != null || e.Button != MouseButtons.Left) return;
-            if (tool == Tool.Picker || resizing != Edge.None || shapeResize != Edge.None) return;
+            if (tool == Tool.Picker || resizing != Edge.None || movingSelection || shapeResize != Edge.None) return;
 
             Shape? hit = HitTest(e.Location);
             if (hit == null) return;
@@ -1154,7 +1494,33 @@ namespace Trazo {
             PushUndo();
             moving = true;
             movedSinceDown = false;
-            dragLast = p;
+            moveStart = p;
+            moveApplied = Point.Empty;
+        }
+
+        /// <summary>
+        /// Arrastra el elemento seleccionado. Con las guías activadas, sus bordes o su centro se ajustan a los de la zona
+        /// y los demás elementos cuando pasan cerca.
+        /// </summary>
+        private void MoveSelected(Point p) {
+            if (selected == null) return;
+            int tx = p.X - moveStart.X, ty = p.Y - moveStart.Y;
+            // Con ajuste, un temblor al hacer clic no debe hacer saltar el elemento a una guía
+            if (SnapEnabled && !movedSinceDown && Math.Abs(tx) < 3 && Math.Abs(ty) < 3) return;
+
+            Rectangle box = AlignBox(selected);
+            box.Offset(tx - moveApplied.X, ty - moveApplied.Y);
+            Point snap = SnapBox(box, selected);
+            tx += snap.X;
+            ty += snap.Y;
+
+            int dx = tx - moveApplied.X, dy = ty - moveApplied.Y;
+            if (dx == 0 && dy == 0) return;
+            Rectangle before = selected.Bounds;
+            selected.Offset(dx, dy);
+            moveApplied = new Point(tx, ty);
+            movedSinceDown = true;
+            InvalidateShape(selected, before);
         }
 
         private void Deselect() {
@@ -1171,6 +1537,11 @@ namespace Trazo {
                 Invalidate(MagnifierRect(mouse));
                 Invalidate(MagnifierRect(e.Location));
             }
+            // Marca de la posición del ratón en las reglas
+            if (ShowRulers && e.Location != mouse) {
+                InvalidateRulerSpan(mouse.X - 1, mouse.X + 2, mouse.Y - 1, mouse.Y + 2);
+                InvalidateRulerSpan(e.X - 1, e.X + 2, e.Y - 1, e.Y + 2);
+            }
             mouse = e.Location;
 
             if (phase == Phase.Selecting) {
@@ -1179,6 +1550,13 @@ namespace Trazo {
                     selection = Rectangle.Intersect(Normalize(start, e.Location), ClientRectangle);
                     InvalidateSelectionChange(old, selection);
                 }
+                return;
+            }
+
+            if (movingSelection) {
+                Rectangle old = selection;
+                selection = Moved(resizeOrigin, e.X - resizeStart.X, e.Y - resizeStart.Y);
+                if (selection != old) InvalidateSelectionChange(old, selection);
                 return;
             }
 
@@ -1204,21 +1582,23 @@ namespace Trazo {
                     case SegmentShape segment:
                         segment.End = shift ? ConstrainAxis(segment.Start, e.Location) : e.Location;
                         break;
+                    case PathArrowShape path:
+                        path.AddPoint(e.Location, axisOnly: shift);
+                        break;
                 }
                 InvalidateShape(drawing, before);
             } else if (moving && selected != null) {
-                int dx = e.X - dragLast.X, dy = e.Y - dragLast.Y;
-                if (dx != 0 || dy != 0) {
-                    Rectangle before = selected.Bounds;
-                    selected.Offset(dx, dy);
-                    movedSinceDown = true;
-                    dragLast = e.Location;
-                    InvalidateShape(selected, before);
-                }
+                MoveSelected(e.Location);
             } else if (textEditor == null) {
+                bool overMove = OnMoveHandle(e.Location);
+                if (overMove != moveHover) {
+                    moveHover = overMove;
+                    Invalidate(MoveHandleBounds);
+                }
                 Edge handle = ShapeHandleAt(e.Location);
                 Edge edge = EdgeAt(e.Location);
-                Cursor = handle != Edge.None ? ShapeHandleCursor(handle)
+                Cursor = overMove ? Cursors.SizeAll
+                    : handle != Edge.None ? ShapeHandleCursor(handle)
                     : edge != Edge.None ? EdgeCursor(edge)
                     : tool != Tool.Picker && selected != null && selected.HitTest(e.Location) ? Cursors.SizeAll
                     : ToolCursor;
@@ -1241,17 +1621,21 @@ namespace Trazo {
                 return;
             }
 
+            EndSnapping();
+
             if (shapeResize != Edge.None) {
                 EndShapeResize();
                 return;
             }
 
-            if (resizing != Edge.None) {
+            if (resizing != Edge.None || movingSelection) {
                 resizing = Edge.None;
-                // Quita la etiqueta de tamaño y vuelve a colocar la barra junto a la nueva zona
+                movingSelection = false;
+                // Quita la etiqueta de tamaño y vuelve a colocar la barra y el botón de mover junto a la nueva zona
                 InvalidateSelectionChange(selection, selection);
                 PositionToolbar();
                 toolbar.Visible = true;
+                PlaceMoveHandle();
                 return;
             }
 
@@ -1260,8 +1644,10 @@ namespace Trazo {
                 bool tooSmall = drawing switch {
                     BoxShape box => box.Rect.Width < 3 || box.Rect.Height < 3,
                     SegmentShape segment => Distance(segment.Start, segment.End) < 5,
+                    PathArrowShape path => path.TooSmall,
                     _ => false,
                 };
+                (drawing as PathArrowShape)?.Finish();
                 if (!tooSmall) {
                     PushUndo();
                     shapes.Add(drawing);
@@ -1286,6 +1672,7 @@ namespace Trazo {
             UpdateTextControls();
             PositionToolbar();
             toolbar.Visible = true;
+            PlaceMoveHandle();
             Invalidate();
         }
 
@@ -1296,9 +1683,82 @@ namespace Trazo {
             Rectangle Decorated(Rectangle sel) {
                 if (sel.IsEmpty) return sel;
                 Rectangle d = Rectangle.Union(sel, SizeLabelRect(sel));
-                d.Inflate(HandleSize + 2, HandleSize + 2);
+                if (phase == Phase.Editing) d = Rectangle.Union(d, MoveHandleRect(sel, moveCorner, moveInside));
+                // Incluye los tiradores y las reglas que van por fuera de la zona
+                int margin = Math.Max(HandleSize, RulerSize) + 2;
+                d.Inflate(margin, margin);
                 return d;
             }
+        }
+
+        // ───────────────────────────── Mover la zona ─────────────────────────────
+
+        private int MoveButtonSize => (int)Math.Round(22 * scale);
+
+        /// <summary>Botón de mover junto a una esquina de la zona: en diagonal por fuera o, si no cabe, por dentro.</summary>
+        private Rectangle MoveHandleRect(Rectangle sel, int corner, bool inside) {
+            int d = MoveButtonSize, gap = (int)Math.Round(8 * scale);
+            bool left = corner is 0 or 2, top = corner is 0 or 1;
+            int x = inside ? (left ? sel.X + gap : sel.Right - gap - d) : (left ? sel.X - gap - d : sel.Right + gap);
+            int y = inside ? (top ? sel.Y + gap : sel.Bottom - gap - d) : (top ? sel.Y - gap - d : sel.Bottom + gap);
+            return new Rectangle(x, y, d, d);
+        }
+
+        private Rectangle MoveHandleBounds {
+            get {
+                Rectangle r = MoveHandleRect(selection, moveCorner, moveInside);
+                r.Inflate(2, 2);
+                return r;
+            }
+        }
+
+        /// <summary>
+        /// Elige la esquina más visible para el botón de mover: la primera (arriba a la izquierda, arriba a la derecha,
+        /// abajo a la izquierda, abajo a la derecha) donde quepa en la pantalla sin tapar la barra de herramientas.
+        /// Si por fuera no cabe en ninguna (la zona ocupa casi toda la pantalla), va por dentro.
+        /// </summary>
+        private void PlaceMoveHandle() {
+            Invalidate(MoveHandleBounds);
+            Rectangle area = ScreenAreaFor(selection);
+            Rectangle bar = toolbar.Bounds;
+            bar.Inflate(4, 4);
+            (moveCorner, moveInside) = (0, true);
+            bool found = false;
+            foreach (bool inside in new[] { false, true }) {
+                for (int corner = 0; corner < 4 && !found; corner++) {
+                    Rectangle r = MoveHandleRect(selection, corner, inside);
+                    if (!area.Contains(r) || r.IntersectsWith(bar)) continue;
+                    (moveCorner, moveInside) = (corner, inside);
+                    found = true;
+                }
+                if (found) break;
+            }
+            moveHover = false;
+            Invalidate(MoveHandleBounds);
+        }
+
+        private bool ShowMoveHandle => phase == Phase.Editing && resizing == Edge.None;
+
+        private bool OnMoveHandle(Point p) {
+            if (!ShowMoveHandle || movingSelection) return false;
+            Rectangle r = MoveHandleRect(selection, moveCorner, moveInside);
+            float cx = r.X + r.Width / 2f, cy = r.Y + r.Height / 2f, reach = r.Width / 2f + 2;
+            return (p.X - cx) * (p.X - cx) + (p.Y - cy) * (p.Y - cy) <= reach * reach;
+        }
+
+        /// <summary>Círculo con el mismo cristal oscuro que la barra de herramientas y el icono de mover.</summary>
+        private void DrawMoveHandle(Graphics g) {
+            if (!ShowMoveHandle) return;
+            Icons.DrawMoveButton(g, MoveHandleRect(selection, moveCorner, moveInside), scale,
+                highlight: movingSelection ? 70 : moveHover ? 40 : 0, GlassEdge);
+        }
+
+        /// <summary>La zona desplazada sin cambiar de tamaño y sin salirse de la pantalla.</summary>
+        private Rectangle Moved(Rectangle r, int dx, int dy) {
+            Rectangle bounds = ClientRectangle;
+            int x = MathUtil.Clamp(r.X + dx, bounds.Left, bounds.Right - r.Width);
+            int y = MathUtil.Clamp(r.Y + dy, bounds.Top, bounds.Bottom - r.Height);
+            return new Rectangle(x, y, r.Width, r.Height);
         }
 
         // ───────────────────────────── Redimensionar la zona ─────────────────────────────
@@ -1368,8 +1828,21 @@ namespace Trazo {
         private IEnumerable<Point> ShapeHandlePoints(Shape? shape) => shape switch {
             BoxShape box => HandlePoints(box.Rect).Select(h => h.point),
             SegmentShape segment => new[] { segment.Start, segment.End },
+            PathArrowShape path => path.Points,
             _ => Enumerable.Empty<Point>(),
         };
+
+        /// <summary>Punto clave de la flecha pintada seleccionada bajo el ratón, o -1. La punta tiene preferencia.</summary>
+        private int PathHandleAt(Point p) {
+            if (selected is not PathArrowShape path) return -1;
+            for (int i = path.Points.Length - 1; i >= 0; i--) {
+                if (OnHandle(p, path.Points[i])) return i;
+            }
+            return -1;
+        }
+
+        /// <summary>Punto clave que se está arrastrando de la flecha pintada.</summary>
+        private int pathHandle = -1;
 
         /// <summary>
         /// Tirador del elemento seleccionado bajo el ratón. En rectángulos y elipses, los lados que mueve;
@@ -1388,11 +1861,15 @@ namespace Trazo {
                     if (OnHandle(p, segment.End)) return Edge.Right;
                     if (OnHandle(p, segment.Start)) return Edge.Left;
                     break;
+                case PathArrowShape:
+                    // Cualquier valor sirve para indicar que hay tirador; el punto lo da PathHandleAt
+                    if (PathHandleAt(p) >= 0) return Edge.Right;
+                    break;
             }
             return Edge.None;
         }
 
-        private Cursor ShapeHandleCursor(Edge edge) => selected is SegmentShape ? Cursors.SizeAll : EdgeCursor(edge);
+        private Cursor ShapeHandleCursor(Edge edge) => selected is SegmentShape or PathArrowShape ? Cursors.SizeAll : EdgeCursor(edge);
 
         private void StartShapeResize(Edge edge, Point p) {
             PushUndo();
@@ -1400,6 +1877,10 @@ namespace Trazo {
             movedSinceDown = false;
             resizeStart = p;
             if (selected is BoxShape box) shapeOrigin = box.Rect;
+            if (selected is PathArrowShape path) {
+                pathHandle = PathHandleAt(p);
+                path.BeginEdit();
+            }
         }
 
         private void ResizeShape(Point p) {
@@ -1411,19 +1892,34 @@ namespace Trazo {
                 case BoxShape box: {
                     int dx = p.X - resizeStart.X, dy = p.Y - resizeStart.Y;
                     int left = shapeOrigin.Left, top = shapeOrigin.Top, right = shapeOrigin.Right, bottom = shapeOrigin.Bottom;
-                    if (shapeResize.HasFlag(Edge.Left)) left += dx;
-                    if (shapeResize.HasFlag(Edge.Right)) right += dx;
-                    if (shapeResize.HasFlag(Edge.Top)) top += dy;
-                    if (shapeResize.HasFlag(Edge.Bottom)) bottom += dy;
+                    // Los lados que se mueven se ajustan a las guías
+                    var gx = new List<int>();
+                    var gy = new List<int>();
+                    if (shapeResize.HasFlag(Edge.Left)) gx.Add(left = SnapValue(left + dx, box, vertical: true));
+                    if (shapeResize.HasFlag(Edge.Right)) gx.Add(right = SnapValue(right + dx, box, vertical: true));
+                    if (shapeResize.HasFlag(Edge.Top)) gy.Add(top = SnapValue(top + dy, box, vertical: false));
+                    if (shapeResize.HasFlag(Edge.Bottom)) gy.Add(bottom = SnapValue(bottom + dy, box, vertical: false));
+                    MarkGuides(gx, gy, box);
                     // Se puede dar la vuelta pasando un lado por encima del opuesto: Rect se normaliza
                     box.Start = new Point(left, top);
                     box.End = new Point(right, bottom);
                     break;
                 }
-                case SegmentShape segment:
-                    if (shapeResize == Edge.Right) segment.End = shift ? ConstrainAxis(segment.Start, p) : p;
-                    else segment.Start = shift ? ConstrainAxis(segment.End, p) : p;
+                case SegmentShape segment: {
+                    // El extremo que se arrastra se ajusta a las guías
+                    Point q = SnapPoint(p, segment);
+                    if (shapeResize == Edge.Right) segment.End = shift ? ConstrainAxis(segment.Start, q) : q;
+                    else segment.Start = shift ? ConstrainAxis(segment.End, q) : q;
+                    Point moved = shapeResize == Edge.Right ? segment.End : segment.Start;
+                    MarkGuides(new[] { moved.X }, new[] { moved.Y }, segment);
                     break;
+                }
+                case PathArrowShape path when pathHandle >= 0: {
+                    Point q = SnapPoint(p, path);
+                    path.MoveVertex(pathHandle, q);
+                    MarkGuides(new[] { q.X }, new[] { q.Y }, path);
+                    break;
+                }
             }
             movedSinceDown = true;
             InvalidateShape(selected, before);
@@ -1431,6 +1927,11 @@ namespace Trazo {
 
         private void EndShapeResize() {
             shapeResize = Edge.None;
+            if (selected is PathArrowShape edited) {
+                edited.EndEdit();
+                pathHandle = -1;
+                InvalidateShape(edited);
+            }
             if (!movedSinceDown) {
                 undoStack.Pop();
                 return;
@@ -1439,6 +1940,7 @@ namespace Trazo {
             bool tooSmall = selected switch {
                 BoxShape box => box.Rect.Width < 3 || box.Rect.Height < 3,
                 SegmentShape segment => Distance(segment.Start, segment.End) < 5,
+                PathArrowShape path => path.TooSmall,
                 _ => false,
             };
             if (tooSmall) Undo();
@@ -1595,6 +2097,28 @@ namespace Trazo {
             selected = null;
             UpdateTextControls();
             Invalidate();
+        }
+
+        /// <summary>Distancia a la que aparece la copia de un elemento duplicado.</summary>
+        private const int DuplicateOffset = 16;
+
+        /// <summary>
+        /// Ctrl+D: copia el elemento seleccionado un poco desplazado (abajo a la derecha, o hacia el otro lado
+        /// si se saldría de la zona) y deja seleccionada la copia, lista para moverla.
+        /// </summary>
+        private void DuplicateSelected() {
+            if (selected == null || moving || drawing != null || shapeResize != Edge.None) return;
+            PushUndo();
+            Shape copy = selected.Clone();
+            Rectangle box = AlignBox(selected);
+            int dx = box.Right + DuplicateOffset > selection.Right ? -DuplicateOffset : DuplicateOffset;
+            int dy = box.Bottom + DuplicateOffset > selection.Bottom ? -DuplicateOffset : DuplicateOffset;
+            copy.Offset(dx, dy);
+            shapes.Add(copy);
+            Deselect();
+            selected = copy;
+            UpdateTextControls();
+            InvalidateShape(copy);
         }
 
         private void DeleteSelected() {
@@ -1884,6 +2408,11 @@ namespace Trazo {
                 return true;
             }
 
+            if (keyData == (Keys.Control | Keys.R)) {
+                ToggleGuides();
+                return true;
+            }
+
             if (phase != Phase.Editing) return base.ProcessCmdKey(ref msg, keyData);
 
             if (NudgeSelected(keyData)) return true;
@@ -1899,11 +2428,23 @@ namespace Trazo {
                 case Keys.Control | Keys.Z:
                     Undo();
                     return true;
+                case Keys.Control | Keys.D:
+                    DuplicateSelected();
+                    return true;
                 case Keys.Delete:
                 case Keys.Back:
                     DeleteSelected();
                     return true;
                 case Keys.A: SetTool(Tool.Arrow); return true;
+                case Keys.F:
+                    // Con la herramienta ya elegida, alterna entre recto y redondeado
+                    if (tool == Tool.PathArrow) {
+                        SetPathMode(!pathRounded);
+                        ShowStatus($"Pintar flecha: {(pathRounded ? "redondeado" : "recto")}");
+                    } else {
+                        SetTool(Tool.PathArrow);
+                    }
+                    return true;
                 case Keys.L: SetTool(Tool.Line); return true;
                 case Keys.P: SetTool(Tool.Pixelate); return true;
                 case Keys.R: SetTool(Tool.Rectangle); return true;
