@@ -111,18 +111,16 @@ La versión se cambia en `installer\Trazo.Installer.wixproj` (`AppVersion`) y en
 
 ### Logo e iconos
 
-El logo se diseña en [`assets/Trazo-simbolo.ai`](assets/Trazo-simbolo.ai). Tras modificarlo en Illustrator, regenera los iconos de la aplicación y de la bandeja, las imágenes del instalador y el logo de este README:
+El logo se diseña en [`assets/Trazo-simbolo.ai`](assets/Trazo-simbolo.ai). Los iconos de la aplicación y de la bandeja (`Trazo.ico`, `TrazoTray.ico`, `TrazoTrayBlack.ico`) y el logo de este README se generan a partir de él.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File assets\build-assets.ps1
-```
+Las imágenes del instalador (fondos, logo, botones) se regeneran solas al compilar el instalador; ver [installer/README.md](installer/README.md).
 
 ## Estructura del proyecto
 
 | Ruta | Contenido |
 |---|---|
 | `Program.cs`, `TrayContext.cs` | Arranque, icono de la bandeja y atajo global |
-| `Updater.cs` | Búsqueda de actualizaciones en las Releases de GitHub |
+| `Updater.cs`, `InstallerLauncher.cs` | Búsqueda de actualizaciones en las Releases de GitHub y apertura del instalador |
 | `UpdateToast.cs` | Aviso discreto de versión nueva |
 | `TrazoMessage.cs` | Mensajes con el estilo de Trazo (por ejemplo, los de las actualizaciones) |
 | `DarkMenu.cs` | Menú oscuro del icono de la bandeja |
@@ -131,9 +129,9 @@ powershell -ExecutionPolicy Bypass -File assets\build-assets.ps1
 | `OcrService.cs` | Reconocimiento de texto con el OCR de Windows |
 | `SettingsForm.cs`, `AppSettings.cs` | Configuración y su almacenamiento en `%AppData%\Trazo` |
 | `Icons.cs` | Iconos de la barra de herramientas, dibujados por código |
-| `installer/` | Instalador MSI (WiX Toolset 5) |
-| `assets/` | Logo fuente y script que genera iconos e imágenes |
-| `docs/` | Informe de consumo de recursos, logo y capturas del README (`assets\capturas-readme.ps1` las regenera) |
+| `installer/` | Instalador MSI (WiX Toolset 5) con el aspecto de Trazo; `installer/art/` genera sus imágenes y `installer/titlebar/` oscurece su barra de título |
+| `assets/` | Logo fuente |
+| `docs/` | Informe de consumo de recursos, logo y capturas del README |
 
 ## Licencia
 

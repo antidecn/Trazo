@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Genera las imágenes del asistente del instalador (fondos, logo, botones, tarjetas y casillas)
+    con el aspecto de Trazo, y el fragmento WiX que las incluye.
+
+      dotnet run (desde installer\art), con la carpeta de salida como argumento; ver installer\README.md
+
+    No hace falta ejecutarlo a mano: Trazo.Installer.wixproj lo lanza al compilar si ha cambiado algo.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- System.Drawing (GDI+) para dibujar -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TrazoInstallerArt</RootNamespace>
+    <SatelliteResourceLanguages>es</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+</Project>

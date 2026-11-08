@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Barra de título oscura para el asistente del instalador (ver Program.cs e installer\README.md).
+    Va dentro del .msi; Trazo.Installer.wixproj lo compila antes de empaquetar.
+    .NET Framework 4.8, que el instalador ya exige, así que no necesita nada más.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>TrazoTitleBar</RootNamespace>
+    <AssemblyName>TrazoTitleBar</AssemblyName>
+    <ApplicationIcon>..\..\Trazo.ico</ApplicationIcon>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <DebugType>none</DebugType>
+    <SatelliteResourceLanguages>es</SatelliteResourceLanguages>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>

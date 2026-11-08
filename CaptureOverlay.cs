@@ -1059,12 +1059,23 @@ namespace Trazo {
         private static int[] Lines(int start, int size) => new[] { start, start + size / 2, start + size };
 
         /// <summary>
+        /// Bordes y centro de la zona para el elemento que se mueve. El trazo se dibuja centrado sobre el contorno,
+        /// así que los bordes se meten hacia dentro medio grosor para que el trazo quede entero dentro de la captura.
+        /// </summary>
+        private static int[] SelectionLines(int start, int size, Shape? moving) {
+            if (moving is null or PixelateShape or TextShape) return Lines(start, size);
+            // Con grosor impar el trazo ocupa justo hasta el último píxel de la zona
+            int inset = (int)Math.Ceiling((moving.Width - 1) / 2);
+            return new[] { start + inset, start + size / 2, start + size - 1 - inset };
+        }
+
+        /// <summary>
         /// Bordes y centros de la zona y de los demás elementos: las líneas a las que se ajusta lo que se mueve.
         /// </summary>
         private (int[] xs, int[] ys) SnapTargets(Shape? exclude) {
             if (snapTargets is { } cached && cached.exclude == exclude) return (cached.xs, cached.ys);
-            var xs = new List<int>(Lines(selection.X, selection.Width));
-            var ys = new List<int>(Lines(selection.Y, selection.Height));
+            var xs = new List<int>(SelectionLines(selection.X, selection.Width, exclude));
+            var ys = new List<int>(SelectionLines(selection.Y, selection.Height, exclude));
             foreach (Shape s in shapes) {
                 if (s == exclude) continue;
                 Rectangle b = AlignBox(s);

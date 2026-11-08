@@ -1,3 +1,10 @@
 <Solution>
+  <Folder Name="/installer/" />
+  <Folder Name="/installer/art/">
+    <Project Path="installer/art/InstallerArt.csproj" />
+  </Folder>
+  <Folder Name="/installer/titlebar/">
+    <Project Path="installer/titlebar/TrazoTitleBar.csproj" />
+  </Folder>
   <Project Path="Trazo.csproj" />
 </Solution>

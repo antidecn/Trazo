@@ -143,93 +143,481 @@
               Condition="REMOVE ~= &quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 2" />
     </InstallExecuteSequence>
 
-    <!-- Al terminar: casilla "Abrir Trazo" marcada por defecto -->
+    <!-- Al terminar: "Abrir Trazo" marcado por defecto (solo en instalaciones y actualizaciones) -->
     <CustomAction Id="LaunchTrazo" FileRef="TrazoExe" ExeCommand="" Execute="immediate" Impersonate="yes" Return="asyncNoWait" />
-    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Abrir Trazo" />
-    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="LAUNCHTRAZO" Value="1" />
 
     <UIRef Id="TrazoUI" />
-    <!-- Imágenes del asistente: se generan con assets\build-assets.ps1 -->
-    <WixVariable Id="WixUIBannerBmp" Value="$(sys.SOURCEFILEDIR)banner.bmp" />
-    <WixVariable Id="WixUIDialogBmp" Value="$(sys.SOURCEFILEDIR)dialog.bmp" />
   </Package>
 
   <!--
-    Interfaz: Bienvenida → Tipo de instalación → Carpeta de destino → Avisos de actualizaciones → Listo para instalar → Progreso → Fin.
+    Interfaz con el aspecto de Trazo (fondo oscuro, texto claro, botones grises redondeados).
+
+    Windows Installer no deja cambiar el color de sus controles, así que:
+      · El fondo es una imagen y los textos son transparentes, con colores de TextStyle.
+      · Los botones son botones con imagen. Las opciones y casillas son pares de botones con imagen
+        (elegido / sin elegir) que se muestran u ocultan según la propiedad, y la cambian al pulsarlos.
+      · La barra de progreso, el campo de la carpeta y el explorador de carpetas son los de Windows.
+
+    Las imágenes las genera installer\art al compilar (ver installer\README.md), a su tamaño exacto para cada escala
+    de pantalla: TRAZOUISCALE vale la altura del texto del sistema redondeada (16 = 100 %, 20, 24, 28 o 32 = 200 %)
+    y las imágenes se eligen por nombre, p. ej. Text="TzBtnNext[TRAZOUISCALE]".
+    Los tamaños de los controles con imagen deben coincidir con los de installer\art\Program.cs.
+
+    Recorrido:
+      Instalación:    Bienvenida → Tipo de instalación → Carpeta → Avisos de actualizaciones → Listo → Progreso → Fin
+      Actualización:  Bienvenida → Listo para actualizar → Progreso → Fin (mismo tipo y carpeta que la versión anterior)
+      Ya instalado:   ¿Reparar o desinstalar? → Listo → Progreso → Fin
+    Desinstalar desde Configuración de Windows usa la ventanita estándar de Windows ("¿Desea desinstalar…?"),
+    que no se puede personalizar; Trazo sí muestra su propia pregunta sobre borrar la configuración.
   -->
   <Fragment>
+    <!-- Juego de imágenes según la escala de pantalla (TextHeight: 16 px al 100 %); antes del primer diálogo -->
+    <Property Id="TRAZOUISCALE" Value="16" />
+    <SetProperty Action="TrazoScale20" Id="TRAZOUISCALE" Value="20" Before="AppSearch" Sequence="ui" Condition="TextHeight &gt;= 18" />
+    <SetProperty Action="TrazoScale24" Id="TRAZOUISCALE" Value="24" After="TrazoScale20" Sequence="ui" Condition="TextHeight &gt;= 22" />
+    <SetProperty Action="TrazoScale28" Id="TRAZOUISCALE" Value="28" After="TrazoScale24" Sequence="ui" Condition="TextHeight &gt;= 26" />
+    <SetProperty Action="TrazoScale32" Id="TRAZOUISCALE" Value="32" After="TrazoScale28" Sequence="ui" Condition="TextHeight &gt;= 30" />
+
+    <!-- Carpeta que se elige en el diálogo de la carpeta de destino (los controles de ruta la usan de forma indirecta) -->
+    <Property Id="TRAZOINSTALLDIR" Value="INSTALLFOLDER" />
+
+    <!--
+      Barra de título con los colores de Trazo (installer/titlebar): un programa pequeño que deja en marcha una copia
+      que oscurece cada ventana del asistente al crearse y termina con el instalador. Espera a que esté lista,
+      así la primera pantalla ya sale oscura. Si falla, la barra se queda como siempre.
+    -->
+    <Binary Id="TrazoTitleBar" SourceFile="$(TitleBarExe)" />
+    <CustomAction Id="TrazoTitleBar" BinaryRef="TrazoTitleBar" ExeCommand="" Execute="immediate" Return="ignore" />
+    <InstallUISequence>
+      <Custom Action="TrazoTitleBar" Before="AppSearch" />
+    </InstallUISequence>
+
     <UI Id="TrazoUI">
-      <TextStyle Id="WixUI_Font_Normal" FaceName="Segoe UI" Size="9" />
-      <TextStyle Id="WixUI_Font_Bigger" FaceName="Segoe UI" Size="12" />
-      <TextStyle Id="WixUI_Font_Title" FaceName="Segoe UI" Size="9" Bold="yes" />
-      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+      <UIRef Id="TrazoArt" />
 
-      <DialogRef Id="ErrorDlg" />
-      <DialogRef Id="FatalError" />
-      <DialogRef Id="FilesInUse" />
-      <DialogRef Id="MsiRMFilesInUse" />
-      <DialogRef Id="PrepareDlg" />
-      <DialogRef Id="ProgressDlg" />
-      <DialogRef Id="ResumeDlg" />
-      <DialogRef Id="UserExit" />
-      <DialogRef Id="WelcomeDlg" />
-      <DialogRef Id="BrowseDlg" />
-      <DialogRef Id="DiskCostDlg" />
-      <DialogRef Id="InvalidDirDlg" />
+      <!--
+        230 y no 240 como en la app: Windows Installer descarta los colores parecidos al fondo de los diálogos
+        de Windows (240, 240, 240) y los pinta en negro.
+      -->
+      <TextStyle Id="TrazoBody" FaceName="Segoe UI" Size="9" Red="230" Green="230" Blue="230" />
+      <TextStyle Id="TrazoSub" FaceName="Segoe UI" Size="9" Red="160" Green="160" Blue="166" />
+      <TextStyle Id="TrazoTitle" FaceName="Segoe UI Semibold" Size="12" Red="255" Green="255" Blue="255" />
+      <TextStyle Id="TrazoHero" FaceName="Segoe UI Semibold" Size="16" Red="255" Green="255" Blue="255" />
+      <Property Id="DefaultUIFont" Value="TrazoBody" />
+      <Property Id="ErrorDialog" Value="ErrorDlg" />
 
-      <!-- Tipo de instalación: siempre muestra las dos opciones -->
+      <!--
+        Sin pantalla de "Preparando…": salía un instante antes de la bienvenida y parpadeaba.
+        El asistente aparece directamente con la pantalla que toca (instalar, actualizar o reparar/desinstalar).
+      -->
+
+      <!-- ───────────── Bienvenida (instalación nueva o actualización) ───────────── -->
+      <Dialog Id="WelcomeDlg" Width="370" Height="270" Title="Instalación de Trazo">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="28" Width="48" Height="48" FixedSize="yes" Text="TzLogoBig[TRAZOUISCALE]" />
+        <Control Id="Title" Type="Text" X="20" Y="90" Width="330" Height="22" Transparent="yes" NoPrefix="yes" Hidden="yes" ShowCondition="NOT PREVIOUSSCOPE"
+                 Text="{\TrazoHero}Te damos la bienvenida a Trazo" />
+        <Control Id="Description" Type="Text" X="20" Y="118" Width="260" Height="60" Transparent="yes" NoPrefix="yes" Hidden="yes" ShowCondition="NOT PREVIOUSSCOPE"
+                 Text="{\TrazoBody}Capturas de pantalla con anotaciones, cuentagotas y OCR. Este asistente instalará Trazo [ProductVersion] en tu equipo." />
+        <Control Id="UpdateTitle" Type="Text" X="20" Y="90" Width="330" Height="22" Transparent="yes" NoPrefix="yes" Hidden="yes" ShowCondition="PREVIOUSSCOPE"
+                 Text="{\TrazoHero}Actualizar Trazo" />
+        <Control Id="UpdateDescription" Type="Text" X="20" Y="118" Width="260" Height="60" Transparent="yes" NoPrefix="yes" Hidden="yes" ShowCondition="PREVIOUSSCOPE"
+                 Text="{\TrazoBody}Se instalará la versión [ProductVersion] en lugar de la que tienes. Tu configuración se conserva." />
+        <Control Id="Hint" Type="Text" X="20" Y="190" Width="260" Height="14" Transparent="yes" NoPrefix="yes" Text="{\TrazoSub}Pulsa Siguiente para continuar." />
+        <Control Id="Next" Type="PushButton" X="212" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Text="TzBtnNext[TRAZOUISCALE]" />
+        <Control Id="Cancel" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Cancel="yes" Text="TzBtnCancel[TRAZOUISCALE]">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- ───────────── Tipo de instalación: dos tarjetas, siempre se ven las dos ───────────── -->
       <Dialog Id="TrazoScopeDlg" Width="370" Height="270" Title="Instalación de Trazo">
-        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
-        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
-        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
-        <Control Id="Title" Type="Text" X="15" Y="6" Width="250" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Tipo de instalación" />
-        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="¿Para quién quieres instalar Trazo?" />
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="18" Width="24" Height="24" FixedSize="yes" Text="TzLogo[TRAZOUISCALE]" />
+        <Control Id="Title" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Text="{\TrazoTitle}Tipo de instalación" />
+        <Control Id="Description" Type="Text" X="54" Y="32" Width="296" Height="12" Transparent="yes" NoPrefix="yes" Text="{\TrazoSub}¿Para quién quieres instalar Trazo?" />
 
-        <Control Id="Scope" Type="RadioButtonGroup" X="20" Y="58" Width="330" Height="140" Property="INSTALLSCOPE">
-          <RadioButtonGroup Property="INSTALLSCOPE">
-            <RadioButton Value="user" X="0" Y="0" Width="320" Height="16" Text="Solo para mí (recomendado)" />
-            <RadioButton Value="machine" X="0" Y="62" Width="320" Height="16" Text="Para todos los usuarios de este equipo" />
-          </RadioButtonGroup>
+        <Control Id="UserOn" Type="PushButton" X="20" Y="62" Width="330" Height="52" Bitmap="yes" FixedSize="yes" Text="TzOptUserOn[TRAZOUISCALE]"
+                 HideCondition="INSTALLSCOPE &lt;&gt; &quot;user&quot;" ShowCondition="INSTALLSCOPE = &quot;user&quot;">
+          <Publish Property="INSTALLSCOPE" Value="user" />
         </Control>
-        <Control Id="UserDescription" Type="Text" X="33" Y="76" Width="310" Height="36" NoPrefix="yes"
-                 Text="Se instala en tu carpeta de usuario (%LocalAppData%\Programs). No necesita permisos de administrador." />
-        <Control Id="MachineDescription" Type="Text" X="33" Y="138" Width="310" Height="36" NoPrefix="yes"
-                 Text="Se instala en Archivos de programa y aparece para todas las cuentas del equipo. Windows pedirá permisos de administrador al instalar." />
+        <Control Id="UserOff" Type="PushButton" X="20" Y="62" Width="330" Height="52" Bitmap="yes" FixedSize="yes" Text="TzOptUserOff[TRAZOUISCALE]"
+                 HideCondition="INSTALLSCOPE = &quot;user&quot;" ShowCondition="INSTALLSCOPE &lt;&gt; &quot;user&quot;">
+          <Publish Property="INSTALLSCOPE" Value="user" />
+        </Control>
+        <Control Id="MachineOn" Type="PushButton" X="20" Y="122" Width="330" Height="52" Bitmap="yes" FixedSize="yes" Text="TzOptMachineOn[TRAZOUISCALE]"
+                 HideCondition="INSTALLSCOPE &lt;&gt; &quot;machine&quot;" ShowCondition="INSTALLSCOPE = &quot;machine&quot;">
+          <Publish Property="INSTALLSCOPE" Value="machine" />
+        </Control>
+        <Control Id="MachineOff" Type="PushButton" X="20" Y="122" Width="330" Height="52" Bitmap="yes" FixedSize="yes" Text="TzOptMachineOff[TRAZOUISCALE]"
+                 HideCondition="INSTALLSCOPE = &quot;machine&quot;" ShowCondition="INSTALLSCOPE &lt;&gt; &quot;machine&quot;">
+          <Publish Property="INSTALLSCOPE" Value="machine" />
+        </Control>
 
-        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
-        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
-        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+        <Control Id="Back" Type="PushButton" X="142" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Text="TzBtnBack[TRAZOUISCALE]" />
+        <Control Id="Next" Type="PushButton" X="212" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Text="TzBtnNext[TRAZOUISCALE]" />
+        <Control Id="Cancel" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Cancel="yes" Text="TzBtnCancel[TRAZOUISCALE]">
           <Publish Event="SpawnDialog" Value="CancelDlg" />
         </Control>
       </Dialog>
 
-      <!-- Avisos de versiones nuevas: casilla desmarcada por defecto -->
+      <!-- ───────────── Carpeta de destino ───────────── -->
+      <Dialog Id="InstallDirDlg" Width="370" Height="270" Title="Instalación de Trazo">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="18" Width="24" Height="24" FixedSize="yes" Text="TzLogo[TRAZOUISCALE]" />
+        <Control Id="Title" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Text="{\TrazoTitle}Carpeta de destino" />
+        <Control Id="Description" Type="Text" X="54" Y="32" Width="296" Height="12" Transparent="yes" NoPrefix="yes" Text="{\TrazoSub}Trazo se instalará en esta carpeta." />
+
+        <Control Id="FolderLabel" Type="Text" X="20" Y="66" Width="330" Height="12" Transparent="yes" NoPrefix="yes" Text="{\TrazoBody}Carpeta:" />
+        <Control Id="Folder" Type="PathEdit" X="20" Y="80" Width="250" Height="18" Property="TRAZOINSTALLDIR" Indirect="yes" />
+        <Control Id="ChangeFolder" Type="PushButton" X="274" Y="80" Width="76" Height="18" Bitmap="yes" FixedSize="yes" Text="TzBtnChange[TRAZOUISCALE]" />
+        <Control Id="FolderHint" Type="Text" X="20" Y="106" Width="330" Height="26" Transparent="yes" NoPrefix="yes"
+                 Text="{\TrazoSub}Puedes escribir otra ruta o elegirla con Cambiar…" />
+
+        <Control Id="Back" Type="PushButton" X="142" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Text="TzBtnBack[TRAZOUISCALE]" />
+        <Control Id="Next" Type="PushButton" X="212" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Text="TzBtnNext[TRAZOUISCALE]" />
+        <Control Id="Cancel" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Cancel="yes" Text="TzBtnCancel[TRAZOUISCALE]">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- ───────────── Elegir carpeta (explorador de carpetas de Windows Installer) ───────────── -->
+      <Dialog Id="BrowseDlg" Width="370" Height="270" Title="Instalación de Trazo">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="18" Width="24" Height="24" FixedSize="yes" Text="TzLogo[TRAZOUISCALE]" />
+        <Control Id="Title" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Text="{\TrazoTitle}Elegir carpeta" />
+        <Control Id="Description" Type="Text" X="54" Y="32" Width="296" Height="12" Transparent="yes" NoPrefix="yes" Text="{\TrazoSub}Busca la carpeta donde instalar Trazo." />
+
+        <Control Id="ComboLabel" Type="Text" X="20" Y="58" Width="160" Height="12" Transparent="yes" NoPrefix="yes" Text="{\TrazoBody}Buscar en:" />
+        <Control Id="DirectoryCombo" Type="DirectoryCombo" X="20" Y="72" Width="170" Height="80" Property="_BrowseProperty" Indirect="yes" Fixed="yes" Remote="yes">
+          <Subscribe Event="IgnoreChange" Attribute="IgnoreChange" />
+        </Control>
+        <Control Id="Up" Type="PushButton" X="194" Y="72" Width="76" Height="18" Bitmap="yes" FixedSize="yes" Text="TzBtnUp[TRAZOUISCALE]">
+          <Publish Event="DirectoryListUp" Value="0" />
+        </Control>
+        <Control Id="NewFolder" Type="PushButton" X="274" Y="72" Width="76" Height="18" Bitmap="yes" FixedSize="yes" Text="TzBtnNewFolder[TRAZOUISCALE]">
+          <Publish Event="DirectoryListNew" Value="0" />
+        </Control>
+        <Control Id="DirectoryList" Type="DirectoryList" X="20" Y="96" Width="330" Height="98" Property="_BrowseProperty" Indirect="yes" Sunken="yes" TabSkip="no" />
+        <Control Id="PathLabel" Type="Text" X="20" Y="200" Width="60" Height="12" Transparent="yes" NoPrefix="yes" Text="{\TrazoBody}Carpeta:" />
+        <Control Id="PathEdit" Type="PathEdit" X="62" Y="198" Width="288" Height="18" Property="_BrowseProperty" Indirect="yes" />
+
+        <Control Id="OK" Type="PushButton" X="212" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Text="TzBtnOk[TRAZOUISCALE]">
+          <Publish Event="SetTargetPath" Value="[_BrowseProperty]" Order="1" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Cancel="yes" Text="TzBtnCancel[TRAZOUISCALE]">
+          <Publish Event="Reset" Value="0" Order="1" />
+          <Publish Event="EndDialog" Value="Return" Order="2" />
+        </Control>
+      </Dialog>
+
+      <!-- ───────────── Avisos de versiones nuevas: casilla desmarcada por defecto ───────────── -->
       <Dialog Id="TrazoUpdatesDlg" Width="370" Height="270" Title="Instalación de Trazo">
-        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
-        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
-        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
-        <Control Id="Title" Type="Text" X="15" Y="6" Width="250" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Avisos de actualizaciones" />
-        <Control Id="Description" Type="Text" X="25" Y="23" Width="300" Height="15" Transparent="yes" NoPrefix="yes" Text="¿Quieres saber cuándo hay una versión nueva de Trazo?" />
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="18" Width="24" Height="24" FixedSize="yes" Text="TzLogo[TRAZOUISCALE]" />
+        <Control Id="Title" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Text="{\TrazoTitle}Avisos de actualizaciones" />
+        <Control Id="Description" Type="Text" X="54" Y="32" Width="296" Height="12" Transparent="yes" NoPrefix="yes" Text="{\TrazoSub}¿Quieres saber cuándo hay una versión nueva de Trazo?" />
 
-        <Control Id="Notify" Type="CheckBox" X="20" Y="62" Width="330" Height="17" Property="NOTIFYUPDATES" CheckBoxValue="1"
-                 Text="Avisarme cuando haya una versión nueva" />
-        <Control Id="NotifyDescription" Type="Text" X="33" Y="82" Width="315" Height="52" NoPrefix="yes"
-                 Text="Trazo lo comprobará como mucho una vez al día y te mostrará un aviso. Nunca se actualiza solo: desde el aviso puedes ver la versión nueva y decidir si instalarla." />
-        <Control Id="SettingsNote" Type="Text" X="20" Y="150" Width="330" Height="30" NoPrefix="yes"
-                 Text="Puedes cambiarlo cuando quieras en la configuración de Trazo (doble clic en su icono de la bandeja)." />
+        <Control Id="NotifyOn" Type="PushButton" X="20" Y="64" Width="300" Height="16" Bitmap="yes" FixedSize="yes" Text="TzChkUpdatesOn[TRAZOUISCALE]"
+                 HideCondition="NOT NOTIFYUPDATES" ShowCondition="NOTIFYUPDATES">
+          <Publish Property="NOTIFYUPDATES" Value="{}" />
+        </Control>
+        <Control Id="NotifyOff" Type="PushButton" X="20" Y="64" Width="300" Height="16" Bitmap="yes" FixedSize="yes" Text="TzChkUpdatesOff[TRAZOUISCALE]"
+                 HideCondition="NOTIFYUPDATES" ShowCondition="NOT NOTIFYUPDATES">
+          <Publish Property="NOTIFYUPDATES" Value="1" />
+        </Control>
+        <Control Id="NotifyDescription" Type="Text" X="41" Y="84" Width="305" Height="40" Transparent="yes" NoPrefix="yes"
+                 Text="{\TrazoSub}Trazo lo comprobará como mucho una vez al día y te mostrará un aviso. Nunca se actualiza solo: desde el aviso puedes ver la versión nueva y decidir si instalarla." />
+        <Control Id="SettingsNote" Type="Text" X="20" Y="140" Width="330" Height="26" Transparent="yes" NoPrefix="yes"
+                 Text="{\TrazoSub}Puedes cambiarlo cuando quieras en la configuración de Trazo (doble clic en su icono de la bandeja)." />
 
-        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
-        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
-        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+        <Control Id="Back" Type="PushButton" X="142" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Text="TzBtnBack[TRAZOUISCALE]" />
+        <Control Id="Next" Type="PushButton" X="212" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Text="TzBtnNext[TRAZOUISCALE]" />
+        <Control Id="Cancel" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Cancel="yes" Text="TzBtnCancel[TRAZOUISCALE]">
           <Publish Event="SpawnDialog" Value="CancelDlg" />
         </Control>
       </Dialog>
 
-      <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+      <!-- ───────────── Ya instalado: reparar o desinstalar ───────────── -->
+      <Dialog Id="MaintenanceTypeDlg" Width="370" Height="270" Title="Trazo">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="18" Width="24" Height="24" FixedSize="yes" Text="TzLogo[TRAZOUISCALE]" />
+        <Control Id="Title" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Text="{\TrazoTitle}Trazo ya está instalado" />
+        <Control Id="Description" Type="Text" X="54" Y="32" Width="296" Height="12" Transparent="yes" NoPrefix="yes" Text="{\TrazoSub}¿Qué quieres hacer?" />
 
-      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="TrazoScopeDlg" Condition="NOT Installed AND NOT PREVIOUSSCOPE" />
+        <Control Id="RepairButton" Type="PushButton" X="20" Y="62" Width="330" Height="52" Bitmap="yes" FixedSize="yes" Text="TzActRepair[TRAZOUISCALE]">
+          <Publish Property="TRAZOMODE" Value="Repair" Order="1" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="2" />
+        </Control>
+        <Control Id="RemoveButton" Type="PushButton" X="20" Y="122" Width="330" Height="52" Bitmap="yes" FixedSize="yes" Text="TzActRemove[TRAZOUISCALE]">
+          <Publish Property="TRAZOMODE" Value="Remove" Order="1" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="2" />
+        </Control>
 
-      <!-- Actualización: mismo tipo de instalación y misma carpeta que la versión anterior, directo a "Listo para instalar" -->
+        <Control Id="Cancel" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Cancel="yes" Text="TzBtnCancel[TRAZOUISCALE]">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- ───────────── Listo: instalar, actualizar, reparar o desinstalar ───────────── -->
+      <Dialog Id="VerifyReadyDlg" Width="370" Height="270" Title="Instalación de Trazo" TrackDiskSpace="yes">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="18" Width="24" Height="24" FixedSize="yes" Text="TzLogo[TRAZOUISCALE]" />
+
+        <Control Id="InstallTitle" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND NOT PREVIOUSSCOPE" Text="{\TrazoTitle}Listo para instalar" />
+        <Control Id="InstallDescription" Type="Text" X="54" Y="32" Width="296" Height="12" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND NOT PREVIOUSSCOPE" Text="{\TrazoSub}Pulsa Instalar para empezar." />
+        <Control Id="InstallFolderLabel" Type="Text" X="20" Y="66" Width="330" Height="12" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed" Text="{\TrazoSub}Carpeta" />
+        <Control Id="InstallFolder" Type="Text" X="20" Y="80" Width="330" Height="24" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed" Text="{\TrazoBody}[INSTALLFOLDER]" />
+        <Control Id="ScopeLabel" Type="Text" X="20" Y="110" Width="330" Height="12" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed" Text="{\TrazoSub}Para" />
+        <Control Id="ScopeUser" Type="Text" X="20" Y="124" Width="330" Height="12" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND MSIINSTALLPERUSER = 1" Text="{\TrazoBody}Solo tu usuario" />
+        <Control Id="ScopeMachine" Type="Text" X="20" Y="124" Width="330" Height="24" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND MSIINSTALLPERUSER &lt;&gt; 1" Text="{\TrazoBody}Todos los usuarios de este equipo (Windows pedirá permisos de administrador)" />
+
+        <Control Id="UpdateTitle" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND PREVIOUSSCOPE" Text="{\TrazoTitle}Listo para actualizar" />
+        <Control Id="UpdateDescription" Type="Text" X="54" Y="32" Width="296" Height="12" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND PREVIOUSSCOPE" Text="{\TrazoSub}Pulsa Actualizar para instalar la versión [ProductVersion]." />
+        <Control Id="UpdateNote" Type="Text" X="20" Y="156" Width="330" Height="26" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND PREVIOUSSCOPE" Text="{\TrazoSub}Si Trazo está abierto, se cerrará un momento. Tu configuración se conserva." />
+
+        <Control Id="RepairTitle" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE = &quot;Repair&quot;" Text="{\TrazoTitle}Listo para reparar" />
+        <Control Id="RepairDescription" Type="Text" X="54" Y="32" Width="296" Height="12" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE = &quot;Repair&quot;" Text="{\TrazoSub}Pulsa Reparar para empezar." />
+        <Control Id="RepairText" Type="Text" X="20" Y="66" Width="330" Height="40" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE = &quot;Repair&quot;"
+                 Text="{\TrazoBody}Se volverán a copiar los archivos de Trazo y su acceso en el menú Inicio. Tu configuración no se toca." />
+
+        <Control Id="RemoveTitle" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE = &quot;Remove&quot;" Text="{\TrazoTitle}Listo para desinstalar" />
+        <Control Id="RemoveDescription" Type="Text" X="54" Y="32" Width="296" Height="12" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE = &quot;Remove&quot;" Text="{\TrazoSub}Pulsa Desinstalar para quitar Trazo." />
+        <Control Id="RemoveText" Type="Text" X="20" Y="66" Width="330" Height="40" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE = &quot;Remove&quot;"
+                 Text="{\TrazoBody}Se quitará Trazo de este equipo. Antes, Trazo te preguntará si quieres borrar también tu configuración." />
+
+        <Control Id="Back" Type="PushButton" X="142" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Text="TzBtnBack[TRAZOUISCALE]" />
+        <Control Id="Install" Type="PushButton" X="212" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND NOT PREVIOUSSCOPE" Text="TzBtnInstall[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Update" Type="PushButton" X="212" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND PREVIOUSSCOPE" Text="TzBtnUpdate[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Repair" Type="PushButton" X="212" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE = &quot;Repair&quot;" Text="TzBtnRepair[TRAZOUISCALE]">
+          <Publish Event="ReinstallMode" Value="ecmus" Order="1" />
+          <Publish Event="Reinstall" Value="All" Order="2" />
+          <Publish Event="EndDialog" Value="Return" Order="3" />
+        </Control>
+        <Control Id="Remove" Type="PushButton" X="212" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE = &quot;Remove&quot;" Text="TzBtnRemove[TRAZOUISCALE]">
+          <Publish Event="Remove" Value="All" Order="1" />
+          <Publish Event="EndDialog" Value="Return" Order="2" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Cancel="yes" Text="TzBtnCancel[TRAZOUISCALE]">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- ───────────── Progreso ───────────── -->
+      <Dialog Id="ProgressDlg" Width="370" Height="270" Title="Instalación de Trazo" Modeless="yes">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="18" Width="24" Height="24" FixedSize="yes" Text="TzLogo[TRAZOUISCALE]" />
+        <Control Id="InstallTitle" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND NOT PREVIOUSSCOPE" Text="{\TrazoTitle}Instalando Trazo" />
+        <Control Id="UpdateTitle" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND PREVIOUSSCOPE" Text="{\TrazoTitle}Actualizando Trazo" />
+        <Control Id="RepairTitle" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE = &quot;Repair&quot;" Text="{\TrazoTitle}Reparando Trazo" />
+        <Control Id="RemoveTitle" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE &lt;&gt; &quot;Repair&quot;" Text="{\TrazoTitle}Desinstalando Trazo" />
+        <Control Id="Description" Type="Text" X="54" Y="32" Width="296" Height="12" Transparent="yes" NoPrefix="yes" Text="{\TrazoSub}Un momento, solo tarda unos segundos." />
+        <Control Id="ProgressBar" Type="ProgressBar" X="20" Y="80" Width="330" Height="6" ProgressBlocks="yes" Text="Progreso">
+          <Subscribe Event="SetProgress" Attribute="Progress" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Cancel="yes" Text="TzBtnCancel[TRAZOUISCALE]">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- ───────────── Fin ───────────── -->
+      <Dialog Id="ExitDialog" Width="370" Height="270" Title="Instalación de Trazo">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="28" Width="48" Height="48" FixedSize="yes" Text="TzLogoBig[TRAZOUISCALE]" />
+
+        <Control Id="InstallTitle" Type="Text" X="20" Y="90" Width="330" Height="22" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND NOT PREVIOUSSCOPE" Text="{\TrazoHero}Trazo está instalado" />
+        <Control Id="InstallText" Type="Text" X="20" Y="118" Width="260" Height="50" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND NOT PREVIOUSSCOPE"
+                 Text="{\TrazoBody}Lo encontrarás en la bandeja del sistema y en el menú Inicio. Pulsa Ctrl + Alt + S para hacer una captura; el atajo se puede cambiar en la configuración." />
+        <Control Id="UpdateTitle" Type="Text" X="20" Y="90" Width="330" Height="22" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND PREVIOUSSCOPE" Text="{\TrazoHero}Trazo está actualizado" />
+        <Control Id="UpdateText" Type="Text" X="20" Y="118" Width="260" Height="50" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="NOT Installed AND PREVIOUSSCOPE" Text="{\TrazoBody}Ya tienes la versión [ProductVersion], con tu configuración de siempre." />
+        <Control Id="RepairTitle" Type="Text" X="20" Y="90" Width="330" Height="22" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE = &quot;Repair&quot;" Text="{\TrazoHero}Trazo se ha reparado" />
+        <Control Id="RepairText" Type="Text" X="20" Y="118" Width="260" Height="50" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE = &quot;Repair&quot;" Text="{\TrazoBody}Los archivos de Trazo vuelven a estar completos." />
+        <Control Id="RemoveTitle" Type="Text" X="20" Y="90" Width="330" Height="22" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE &lt;&gt; &quot;Repair&quot;" Text="{\TrazoHero}Trazo se ha desinstalado" />
+        <Control Id="RemoveText" Type="Text" X="20" Y="118" Width="260" Height="50" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 ShowCondition="Installed AND TRAZOMODE &lt;&gt; &quot;Repair&quot;" Text="{\TrazoBody}Gracias por usar Trazo." />
+
+        <Control Id="LaunchOn" Type="PushButton" X="20" Y="190" Width="120" Height="16" Bitmap="yes" FixedSize="yes" Hidden="yes" Text="TzChkLaunchOn[TRAZOUISCALE]"
+                 HideCondition="Installed OR NOT LAUNCHTRAZO" ShowCondition="NOT Installed AND LAUNCHTRAZO">
+          <Publish Property="LAUNCHTRAZO" Value="{}" />
+        </Control>
+        <Control Id="LaunchOff" Type="PushButton" X="20" Y="190" Width="120" Height="16" Bitmap="yes" FixedSize="yes" Hidden="yes" Text="TzChkLaunchOff[TRAZOUISCALE]"
+                 HideCondition="Installed OR LAUNCHTRAZO" ShowCondition="NOT Installed AND NOT LAUNCHTRAZO">
+          <Publish Property="LAUNCHTRAZO" Value="1" />
+        </Control>
+
+        <Control Id="Finish" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Cancel="yes" Text="TzBtnFinish[TRAZOUISCALE]">
+          <Publish Event="DoAction" Value="LaunchTrazo" Order="1" Condition="LAUNCHTRAZO = 1 AND NOT Installed" />
+          <Publish Event="EndDialog" Value="Return" Order="2" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="UserExit" Width="370" Height="270" Title="Instalación de Trazo">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="28" Width="48" Height="48" FixedSize="yes" Text="TzLogoBig[TRAZOUISCALE]" />
+        <Control Id="Title" Type="Text" X="20" Y="90" Width="330" Height="22" Transparent="yes" NoPrefix="yes" Text="{\TrazoHero}Cancelado" />
+        <Control Id="Description" Type="Text" X="20" Y="118" Width="260" Height="50" Transparent="yes" NoPrefix="yes"
+                 Text="{\TrazoBody}No se ha cambiado nada en tu equipo. Puedes volver a abrir el instalador cuando quieras." />
+        <Control Id="Finish" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Cancel="yes" Text="TzBtnFinish[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="FatalError" Width="370" Height="270" Title="Instalación de Trazo">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="28" Width="48" Height="48" FixedSize="yes" Text="TzLogoBig[TRAZOUISCALE]" />
+        <Control Id="Title" Type="Text" X="20" Y="90" Width="330" Height="22" Transparent="yes" NoPrefix="yes" Text="{\TrazoHero}No se ha podido terminar" />
+        <Control Id="Description" Type="Text" X="20" Y="118" Width="260" Height="60" Transparent="yes" NoPrefix="yes"
+                 Text="{\TrazoBody}Ha habido un error y no se ha cambiado nada en tu equipo. Vuelve a intentarlo; si sigue pasando, descarga el instalador de nuevo." />
+        <Control Id="Finish" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Cancel="yes" Text="TzBtnFinish[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+      <!-- Instalación interrumpida que Windows reanuda -->
+      <Dialog Id="ResumeDlg" Width="370" Height="270" Title="Instalación de Trazo">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="28" Width="48" Height="48" FixedSize="yes" Text="TzLogoBig[TRAZOUISCALE]" />
+        <Control Id="Title" Type="Text" X="20" Y="90" Width="330" Height="22" Transparent="yes" NoPrefix="yes" Text="{\TrazoHero}Continuar la instalación" />
+        <Control Id="Description" Type="Text" X="20" Y="118" Width="260" Height="50" Transparent="yes" NoPrefix="yes"
+                 Text="{\TrazoBody}La instalación de Trazo se quedó a medias. Pulsa Instalar para terminarla." />
+        <Control Id="Install" Type="PushButton" X="212" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Text="TzBtnInstall[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Cancel="yes" Text="TzBtnCancel[TRAZOUISCALE]">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- ───────────── Diálogos pequeños ───────────── -->
+      <Dialog Id="CancelDlg" Width="270" Height="100" Title="Instalación de Trazo">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="270" Height="100" TabSkip="no" Text="TzBgSmall[TRAZOUISCALE]" />
+        <Control Id="Text" Type="Text" X="20" Y="16" Width="230" Height="40" Transparent="yes" NoPrefix="yes" Text="{\TrazoBody}¿Seguro que quieres cancelar?" />
+        <Control Id="Yes" Type="PushButton" X="114" Y="72" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Text="TzBtnYes[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="No" Type="PushButton" X="184" Y="72" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Cancel="yes" Text="TzBtnNo[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+
+      <!-- Errores: Windows Installer pone el texto y deja visibles solo los botones que hacen falta -->
+      <Dialog Id="ErrorDlg" Width="270" Height="100" Title="Instalación de Trazo" ErrorDialog="yes">
+        <Control Id="ErrorText" Type="Text" X="20" Y="12" Width="230" Height="48" Transparent="yes" NoPrefix="yes" TabSkip="no" Text="{\TrazoBody}Error" />
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="270" Height="100" TabSkip="no" Text="TzBgSmall[TRAZOUISCALE]" />
+        <Control Id="Y" Type="PushButton" X="184" Y="72" Width="66" Height="20" Bitmap="yes" FixedSize="yes" TabSkip="yes" Text="TzBtnYes[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="ErrorYes" />
+        </Control>
+        <Control Id="A" Type="PushButton" X="184" Y="72" Width="66" Height="20" Bitmap="yes" FixedSize="yes" TabSkip="yes" Text="TzBtnAbort[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="ErrorAbort" />
+        </Control>
+        <Control Id="C" Type="PushButton" X="184" Y="72" Width="66" Height="20" Bitmap="yes" FixedSize="yes" TabSkip="yes" Text="TzBtnCancel[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="ErrorCancel" />
+        </Control>
+        <Control Id="I" Type="PushButton" X="184" Y="72" Width="66" Height="20" Bitmap="yes" FixedSize="yes" TabSkip="yes" Text="TzBtnIgnore[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="ErrorIgnore" />
+        </Control>
+        <Control Id="N" Type="PushButton" X="184" Y="72" Width="66" Height="20" Bitmap="yes" FixedSize="yes" TabSkip="yes" Text="TzBtnNo[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="ErrorNo" />
+        </Control>
+        <Control Id="O" Type="PushButton" X="184" Y="72" Width="66" Height="20" Bitmap="yes" FixedSize="yes" TabSkip="yes" Text="TzBtnOk[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="ErrorOk" />
+        </Control>
+        <Control Id="R" Type="PushButton" X="184" Y="72" Width="66" Height="20" Bitmap="yes" FixedSize="yes" TabSkip="yes" Text="TzBtnRetry[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="ErrorRetry" />
+        </Control>
+      </Dialog>
+
+      <!-- Archivos en uso (Trazo se cierra solo antes de actualizar; esto queda por si otro programa los tiene abiertos) -->
+      <Dialog Id="MsiRMFilesInUse" Width="370" Height="270" Title="Instalación de Trazo">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="18" Width="24" Height="24" FixedSize="yes" Text="TzLogo[TRAZOUISCALE]" />
+        <Control Id="Title" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Text="{\TrazoTitle}Hay programas abiertos" />
+        <Control Id="Description" Type="Text" X="54" Y="32" Width="296" Height="12" Transparent="yes" NoPrefix="yes" Text="{\TrazoSub}Se cerrarán para poder continuar." />
+        <Control Id="List" Type="ListBox" X="20" Y="62" Width="330" Height="150" Property="FileInUseProcess" Sunken="yes" TabSkip="yes" />
+        <Control Id="OK" Type="PushButton" X="212" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Text="TzBtnOk[TRAZOUISCALE]">
+          <Publish Event="RMShutdownAndRestart" Value="0" Order="1" />
+          <Publish Event="EndDialog" Value="Return" Order="2" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="284" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Cancel="yes" Text="TzBtnCancel[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="FilesInUse" Width="370" Height="270" Title="Instalación de Trazo" KeepModeless="yes">
+        <Control Id="Bg" Type="Bitmap" X="0" Y="0" Width="370" Height="270" TabSkip="no" Text="TzBg[TRAZOUISCALE]" />
+        <Control Id="Logo" Type="Bitmap" X="20" Y="18" Width="24" Height="24" FixedSize="yes" Text="TzLogo[TRAZOUISCALE]" />
+        <Control Id="Title" Type="Text" X="54" Y="16" Width="296" Height="16" Transparent="yes" NoPrefix="yes" Text="{\TrazoTitle}Hay programas abiertos" />
+        <Control Id="Description" Type="Text" X="54" Y="32" Width="296" Height="12" Transparent="yes" NoPrefix="yes" Text="{\TrazoSub}Ciérralos y pulsa Reintentar." />
+        <Control Id="List" Type="ListBox" X="20" Y="62" Width="330" Height="150" Property="FileInUseProcess" Sunken="yes" TabSkip="yes" />
+        <Control Id="Exit" Type="PushButton" X="72" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Cancel="yes" Text="TzBtnExit[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="Ignore" Type="PushButton" X="142" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Text="TzBtnIgnore[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="Ignore" />
+        </Control>
+        <Control Id="Retry" Type="PushButton" X="212" Y="240" Width="66" Height="20" Bitmap="yes" FixedSize="yes" Default="yes" Text="TzBtnRetry[TRAZOUISCALE]">
+          <Publish Event="EndDialog" Value="Retry" />
+        </Control>
+      </Dialog>
+
+      <!-- ───────────── Secuencia ───────────── -->
+      <InstallUISequence>
+        <Show Dialog="WelcomeDlg" Before="ProgressDlg" Condition="NOT Installed" />
+        <Show Dialog="ResumeDlg" Before="ProgressDlg" Condition="Installed AND (RESUME OR Preselected)" />
+        <Show Dialog="MaintenanceTypeDlg" Before="ProgressDlg" Condition="Installed AND NOT RESUME AND NOT Preselected" />
+        <Show Dialog="ProgressDlg" Before="ExecuteAction" />
+        <Show Dialog="ExitDialog" OnExit="success" />
+        <Show Dialog="UserExit" OnExit="cancel" />
+        <Show Dialog="FatalError" OnExit="error" />
+      </InstallUISequence>
+      <!-- Instalación administrativa (msiexec /a): solo progreso y pantallas finales -->
+      <AdminUISequence>
+        <Show Dialog="ProgressDlg" Before="ExecuteAction" />
+        <Show Dialog="ExitDialog" OnExit="success" />
+        <Show Dialog="UserExit" OnExit="cancel" />
+        <Show Dialog="FatalError" OnExit="error" />
+      </AdminUISequence>
+
+      <!-- Bienvenida: instalación nueva → tipo de instalación -->
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="TrazoScopeDlg" Order="6" Condition="NOT Installed AND NOT PREVIOUSSCOPE" />
+
+      <!-- Actualización: mismo tipo de instalación y misma carpeta que la versión anterior, directo a "Listo para actualizar" -->
       <Publish Dialog="WelcomeDlg" Control="Next" Property="MSIINSTALLPERUSER" Value="1" Order="1" Condition="NOT Installed AND PREVIOUSSCOPE = &quot;user&quot;" />
       <Publish Dialog="WelcomeDlg" Control="Next" Property="MSIINSTALLPERUSER" Value="{}" Order="2" Condition="NOT Installed AND PREVIOUSSCOPE = &quot;machine&quot;" />
       <Publish Dialog="WelcomeDlg" Control="Next" Property="INSTALLFOLDER" Value="[USERINSTALLFOLDER]" Order="3" Condition="NOT Installed AND PREVIOUSSCOPE = &quot;user&quot;" />
@@ -244,16 +632,16 @@
       <Publish Dialog="TrazoScopeDlg" Control="Next" Property="INSTALLFOLDER" Value="[MACHINEINSTALLFOLDER]" Order="4" Condition="INSTALLSCOPE = &quot;machine&quot;" />
       <Publish Dialog="TrazoScopeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="5" />
 
-      <!-- Elegir carpeta: "Cambiar…" abre el explorador de carpetas y se valida la ruta antes de seguir -->
+      <!--
+        Carpeta: "Cambiar…" abre el explorador de carpetas. SetTargetPath comprueba la ruta: si no vale,
+        Windows Installer lo dice con el diálogo de error y el asistente se queda en la misma pantalla.
+      -->
       <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="TrazoScopeDlg" />
-      <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
-      <Publish Dialog="InstallDirDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath_$(sys.BUILDARCHSHORT)" Order="2" Condition="NOT WIXUI_DONTVALIDATEPATH" />
-      <Publish Dialog="InstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
-      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="TrazoUpdatesDlg" Order="4" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
-      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath" Value="[TRAZOINSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="TrazoUpdatesDlg" Order="2" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[TRAZOINSTALLDIR]" Order="1" />
       <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
-      <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction" Value="WixUIValidatePath_$(sys.BUILDARCHSHORT)" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH" />
-      <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="4" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="EndDialog" Value="Return" Order="2" />
 
       <!-- La respuesta se guarda como "1" o "0" (la casilla desmarcada deja la propiedad vacía) -->
       <Publish Dialog="TrazoUpdatesDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" />
@@ -262,19 +650,8 @@
       <Publish Dialog="TrazoUpdatesDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="3" />
 
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="TrazoUpdatesDlg" Order="1" Condition="NOT Installed AND NOT PREVIOUSSCOPE" />
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="NOT Installed AND PREVIOUSSCOPE" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed" />
-
-      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
-      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
-      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
-      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
-
-      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchTrazo"
-               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
-      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="NOT Installed AND PREVIOUSSCOPE" />
     </UI>
-
-    <UIRef Id="WixUI_Common" />
   </Fragment>
 </Wix>

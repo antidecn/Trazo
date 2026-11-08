@@ -83,8 +83,9 @@ namespace Trazo {
                 return false;
             }
 
-            // Con interfaz: el asistente detecta la versión instalada, la sustituye y ofrece volver a abrir Trazo
-            Process.Start(new ProcessStartInfo("msiexec.exe", $"/i \"{path}\"") { UseShellExecute = true });
+            // Con interfaz: el asistente detecta la versión instalada, la sustituye y ofrece volver a abrir Trazo.
+            // Trazo espera a que salga el asistente (y oculta la ventanita previa de Windows Installer) antes de cerrarse.
+            await InstallerLauncher.StartAsync(path);
             return true;
         }
 

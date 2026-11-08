@@ -9,13 +9,14 @@
   -->
 
   <PropertyGroup>
-    <AppVersion>1.5.0</AppVersion>
+    <AppVersion>1.5.1</AppVersion>
     <OutputName>Trazo-$(AppVersion)</OutputName>
     <Platform>x64</Platform>
     <InstallerPlatform>x64</InstallerPlatform>
     <Cultures>es-ES</Cultures>
     <AppPublishDir>$(MSBuildThisFileDirectory)obj\publish\</AppPublishDir>
-    <DefineConstants>Version=$(AppVersion);PublishDir=$(AppPublishDir);AppDir=$(MSBuildThisFileDirectory)..\</DefineConstants>
+    <TrazoTitleBarDir>$(MSBuildThisFileDirectory)obj\titlebar\</TrazoTitleBarDir>
+    <DefineConstants>Version=$(AppVersion);PublishDir=$(AppPublishDir);AppDir=$(MSBuildThisFileDirectory)..\;TitleBarExe=$(TrazoTitleBarDir)TrazoTitleBar.exe</DefineConstants>
     <!--
       Paquete de doble ámbito (usuario o equipo): estas comprobaciones suponen un único ámbito fijo
       y dan falsos avisos con HKMU, la carpeta redirigida y el inicio automático en HKCU.
@@ -25,9 +26,38 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
     <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
   </ItemGroup>
+
+  <!--
+    Imágenes del asistente con el aspecto de Trazo: las genera installer\art (C#, .NET 10) en obj\art,
+    junto con TrazoArt.wxs, que las mete en el .msi. Solo se regeneran si cambia el generador o el símbolo.
+    Ver installer\README.md.
+  -->
+  <PropertyGroup>
+    <TrazoArtDir>$(MSBuildThisFileDirectory)obj\art\</TrazoArtDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <TrazoArtInput Include="art\*.cs;art\*.csproj;..\assets\Trazo-simbolo.ai" />
+    <Compile Include="$(TrazoArtDir)TrazoArt.wxs" />
+  </ItemGroup>
+
+  <Target Name="TrazoArt" BeforeTargets="BeforeBuild" Inputs="@(TrazoArtInput)" Outputs="$(TrazoArtDir)TrazoArt.wxs">
+    <RemoveDir Directories="$(TrazoArtDir)" />
+    <Exec Command="dotnet run --project &quot;$(MSBuildThisFileDirectory)art\InstallerArt.csproj&quot; -c Release -- &quot;$(TrazoArtDir.TrimEnd('\'))&quot;" />
+  </Target>
+
+  <!--
+    Barra de título oscura del asistente: installer\titlebar (C#, .NET Framework 4.8) va dentro del .msi.
+    Ver installer\README.md.
+  -->
+  <ItemGroup>
+    <TrazoTitleBarInput Include="titlebar\*.cs;titlebar\*.csproj;..\Trazo.ico" />
+  </ItemGroup>
+
+  <Target Name="TrazoTitleBar" BeforeTargets="BeforeBuild" Inputs="@(TrazoTitleBarInput)" Outputs="$(TrazoTitleBarDir)TrazoTitleBar.exe">
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)titlebar\TrazoTitleBar.csproj&quot; -c Release -nologo -o &quot;$(TrazoTitleBarDir.TrimEnd('\'))&quot;" />
+  </Target>
 
   <Target Name="PublishApp" BeforeTargets="BeforeBuild">
     <RemoveDir Directories="$(AppPublishDir)" />
