@@ -18,10 +18,10 @@
 ## Características
 
 - **Captura con un atajo** (por defecto <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd>). Funciona con varios monitores. Doble clic en el icono de la bandeja para abrir la configuración.
-- **Anotaciones** sobre la zona elegida: flechas, líneas, rectángulos, elipses y texto, con color de borde, relleno, grosor, fuente y tamaño.
+- **Anotaciones** sobre la zona elegida: flechas, líneas, rectángulos, elipses y texto, con color de borde, relleno, grosor, fuente y tamaño (la fuente y el tamaño, en el desplegable del botón Texto, como las flechas). Los colores se eligen con un selector propio que admite códigos hexadecimales (`#RRGGBB`) y recuerda los últimos usados.
 - **Pintar flecha**: dibuja a mano el recorrido de una flecha y Trazo lo endereza en tramos rectos, con esquinas en ángulo recto o redondeadas. Está en el mismo botón que la flecha normal: su desplegable elige entre Flecha, Recto y Redondeado.
 - **Pixelar** una parte de la captura para ocultar datos.
-- **Reconocimiento de texto (OCR)**: lee el texto de la zona y lo copia al portapapeles, con el motor de OCR que incluye Windows.
+- **Reconocimiento de texto (OCR)**: lee el texto de la zona y lo copia al portapapeles, con el motor de OCR que incluye Windows. Arrastrando con el botón derecho al elegir la zona, el texto se lee directamente.
 - **Cuentagotas**: copia el color de cualquier píxel en formato `#RRGGBB`.
 - **Copiar o guardar** la captura con un solo atajo.
 - **Redimensionar o mover la zona** después de elegirla, arrastrando sus bordes o tiradores, o el botón de mover que aparece junto a una de sus esquinas.
@@ -46,6 +46,7 @@
 | Pixelar | <kbd>P</kbd> |
 | Cuentagotas | <kbd>I</kbd> |
 | Leer texto (OCR) | <kbd>O</kbd> |
+| Leer el texto de una zona directamente (al elegir la zona) | Arrastrar con el botón derecho |
 | Cambiar el grosor (o el tamaño del texto, con la herramienta Texto o un texto seleccionado) | <kbd>Ctrl</kbd>+rueda del ratón |
 | Mover el elemento seleccionado (4 px) | Flechas |
 | Mover el borde derecho (<kbd>←</kbd>/<kbd>→</kbd>) o inferior (<kbd>↑</kbd>/<kbd>↓</kbd>) del elemento seleccionado (4 px; en un texto, cambia el tamaño de la letra) | <kbd>Mayús</kbd>+flechas |
@@ -56,7 +57,7 @@
 | Copiar y cerrar | <kbd>Ctrl</kbd>+<kbd>C</kbd> o <kbd>Intro</kbd> |
 | Copiar el color bajo el cursor y cerrar (antes de elegir zona) | <kbd>Ctrl</kbd>+<kbd>C</kbd> |
 | Guardar como imagen | <kbd>Ctrl</kbd>+<kbd>S</kbd> |
-| Cerrar sin guardar | <kbd>Esc</kbd> |
+| Cerrar sin guardar | <kbd>Esc</kbd> o clic derecho (antes de elegir zona) |
 
 Con <kbd>Mayús</kbd> las flechas y líneas quedan horizontales o verticales, los rectángulos cuadrados y las elipses círculos. Al pintar una flecha, <kbd>Mayús</kbd> hace que todos los tramos sean horizontales o verticales, sin diagonales.
 
@@ -123,12 +124,15 @@ Las imágenes del instalador (fondos, logo, botones) se regeneran solas al compi
 | `Updater.cs`, `InstallerLauncher.cs` | Búsqueda de actualizaciones en las Releases de GitHub y apertura del instalador |
 | `UpdateToast.cs` | Aviso discreto de versión nueva |
 | `TrazoMessage.cs` | Mensajes con el estilo de Trazo (por ejemplo, los de las actualizaciones) |
-| `DarkMenu.cs` | Menú oscuro del icono de la bandeja |
+| `DarkMenu.cs` | Menús oscuros: el del icono de la bandeja y los desplegables de la barra de la captura |
 | `ShortcutsForm.cs` | Ventana de atajos de teclado |
 | `CaptureOverlay.cs`, `Shapes.cs` | Pantalla de captura, herramientas y formas |
 | `OcrService.cs` | Reconocimiento de texto con el OCR de Windows |
+| `Toast.cs` | Avisos que quedan en pantalla al cerrar la captura (color copiado, texto leído) |
 | `SettingsForm.cs`, `AppSettings.cs` | Configuración y su almacenamiento en `%AppData%\Trazo` |
+| `ColorPicker.cs` | Selector de color con código hexadecimal y colores recientes |
 | `Icons.cs` | Iconos de la barra de herramientas, dibujados por código |
+| `Ui.cs` | Lo compartido por todas las ventanas: estilo oscuro, tarjetas de aviso, colores `#RRGGBB` y formas redondeadas |
 | `installer/` | Instalador MSI (WiX Toolset 5) con el aspecto de Trazo; `installer/art/` genera sus imágenes y `installer/titlebar/` oscurece su barra de título |
 | `assets/` | Logo fuente |
 | `docs/` | Informe de consumo de recursos, logo y capturas del README |

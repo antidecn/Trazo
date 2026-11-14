@@ -1,13 +1,12 @@
-using System.Diagnostics;
 using System.Drawing.Drawing2D;
 
 namespace Trazo {
 
     /// <summary>
     /// Configuración con el mismo aspecto que la barra de herramientas de la captura:
-    /// fondo oscuro, texto claro, acento azul y controles redondeados dibujados por código.
+    /// fondo oscuro, texto claro, acento gris claro y controles redondeados dibujados por código.
     /// </summary>
-    internal sealed class SettingsForm : Form {
+    internal sealed class SettingsForm : DarkDialog {
 
         // Colores compartidos por todos los controles de la ventana
         internal static readonly Color Back = Color.FromArgb(28, 28, 30);
@@ -34,7 +33,6 @@ namespace Trazo {
         private readonly ToolTip colorTip = new();
         private readonly SwatchButton borderColorButton;
         private readonly OptionPicker borderWidthPicker;
-        private readonly List<Font> fonts = new();
 
         public Keys Hotkey => hotkeyBox.Hotkey;
         public bool StartWithWindows => startupCheck.Checked;
@@ -59,12 +57,6 @@ namespace Trazo {
             Text = "Configuración de Trazo";
             Icon = icon;
             Font = NewFont("Segoe UI", 9f);
-            BackColor = Back;
-            ForeColor = TextColor;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
-            StartPosition = FormStartPosition.CenterScreen;
             AutoScaleMode = AutoScaleMode.Font;
             AutoSize = true;
             AutoSizeMode = AutoSizeMode.GrowAndShrink;
@@ -198,9 +190,7 @@ namespace Trazo {
                 LinkBehavior = LinkBehavior.HoverUnderline,
                 Margin = new Padding(0, 0, 0, 18),
             };
-            settingsLink.LinkClicked += (_, _) => {
-                Process.Start(new ProcessStartInfo("ms-settings:easeofaccess-keyboard") { UseShellExecute = true });
-            };
+            settingsLink.LinkClicked += (_, _) => Ui.OpenUrl("ms-settings:easeofaccess-keyboard");
 
             startupCheck = new DarkCheckBox("Iniciar Trazo al encender el ordenador", startWithWindows) {
                 Margin = new Padding(0, 0, 0, 10),
@@ -229,8 +219,9 @@ namespace Trazo {
             };
             colorTip.SetToolTip(borderColorButton, "Color del borde");
             borderColorButton.Click += (_, _) => {
-                using var dialog = new ColorDialog { Color = borderColorButton.Color, FullOpen = true, AnyColor = true };
-                if (dialog.ShowDialog(this) == DialogResult.OK) borderColorButton.Color = dialog.Color;
+                // Los recientes se comparten con la captura y se guardan al guardar la configuración
+                output.RecentColors ??= new List<string>();
+                if (ColorPicker.Pick(this, borderColorButton.Color, output.RecentColors) is Color c) borderColorButton.Color = c;
             };
             var borderRow = new FlowLayoutPanel {
                 AutoSize = true,
@@ -326,25 +317,6 @@ namespace Trazo {
             CancelButton = cancel;
         }
 
-        private Font NewFont(string family, float size) {
-            var font = new Font(family, size);
-            fonts.Add(font);
-            return font;
-        }
-
-        protected override void OnHandleCreated(EventArgs e) {
-            base.OnHandleCreated(e);
-            // Barra de título oscura y del mismo color que el fondo (Windows 11; en Windows 10 solo oscura)
-            int on = 1;
-            NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_USE_IMMERSIVE_DARK_MODE, ref on, sizeof(int));
-            int caption = ColorTranslator.ToWin32(Back);
-            NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
-            // Sin icono ni título en la barra: ya se sabe que es Trazo (siguen en la barra de tareas)
-            NativeMethods.HideCaption(Handle);
-            int border = ColorTranslator.ToWin32(Edge);
-            NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_BORDER_COLOR, ref border, sizeof(int));
-        }
-
         protected override void OnShown(EventArgs e) {
             base.OnShown(e);
             // Sin el foco en el cuadro del atajo: así el atajo global sigue funcionando hasta que se haga clic en él
@@ -383,7 +355,6 @@ namespace Trazo {
         protected override void Dispose(bool disposing) {
             if (disposing) {
                 colorTip.Dispose();
-                foreach (Font f in fonts) f.Dispose();
             }
             base.Dispose(disposing);
         }
@@ -441,6 +412,11 @@ namespace Trazo {
                 Size = new Size(Math.Max(LogicalToDeviceUnits(92), content + LogicalToDeviceUnits(28)), LogicalToDeviceUnits(32));
             }
 
+            /// <summary>Relleno del botón según su estado; también lo usan los botones dibujados a mano.</summary>
+            internal static Color FaceColor(bool primary, bool hover, bool pressed) => primary
+                ? pressed ? AccentPressed : hover ? AccentHover : Accent
+                : pressed ? SurfacePressed : hover ? SurfaceHover : Surface;
+
             private int IconSize => LogicalToDeviceUnits(16);
             private int IconGap => LogicalToDeviceUnits(8);
 
@@ -460,10 +436,8 @@ namespace Trazo {
                 Graphics g = e.Graphics;
                 PaintParentBack(this, g);
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-                Color fill = primary
-                    ? pressed ? AccentPressed : hover ? AccentHover : Accent
-                    : pressed ? SurfacePressed : hover ? SurfaceHover : Surface;
-                using (GraphicsPath path = CaptureOverlay.RoundedRect(Inner(this), Radius(this, 6))) {
+                Color fill = FaceColor(primary, hover, pressed);
+                using (GraphicsPath path = Ui.RoundedRect(Inner(this), Radius(this, 6))) {
                     using var brush = new SolidBrush(Enabled ? fill : Surface);
                     g.FillPath(brush, path);
                     if (!primary || Focused) {
@@ -488,7 +462,7 @@ namespace Trazo {
             }
         }
 
-        /// <summary>Casilla redondeada: azul con una marca blanca cuando está activada.</summary>
+        /// <summary>Casilla redondeada: gris claro con una marca blanca cuando está activada.</summary>
         private sealed class DarkCheckBox : CheckBox {
 
             private bool hover;
@@ -522,7 +496,7 @@ namespace Trazo {
 
                 int size = BoxSize;
                 var box = new RectangleF(0.5f, (Height - size) / 2f + 0.5f, size - 1, size - 1);
-                using (GraphicsPath path = CaptureOverlay.RoundedRect(box, Radius(this, 4))) {
+                using (GraphicsPath path = Ui.RoundedRect(box, Radius(this, 4))) {
                     using var brush = new SolidBrush(Checked ? (hover ? AccentHover : Accent) : hover ? SurfaceHover : Surface);
                     g.FillPath(brush, path);
                     if (!Checked || (Focused && ShowFocusCues)) {
@@ -571,7 +545,7 @@ namespace Trazo {
                 Graphics g = e.Graphics;
                 PaintParentBack(this, g);
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-                using GraphicsPath path = CaptureOverlay.RoundedRect(Inner(this, 1), Radius(this, 5));
+                using GraphicsPath path = Ui.RoundedRect(Inner(this, 1), Radius(this, 5));
                 // Desactivado (sin borde): el color se apaga
                 using (var brush = new SolidBrush(Enabled ? color : Color.FromArgb(70, color))) g.FillPath(brush, path);
                 using var pen = new Pen(Focused && ShowFocusCues ? AccentLine : hover && Enabled ? Color.White : Color.FromArgb(200, 255, 255, 255), 1.5f);
@@ -652,7 +626,7 @@ namespace Trazo {
                 Graphics g = e.Graphics;
                 PaintParentBack(this, g);
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-                using (GraphicsPath path = CaptureOverlay.RoundedRect(Inner(this), Radius(this, 6))) {
+                using (GraphicsPath path = Ui.RoundedRect(Inner(this), Radius(this, 6))) {
                     // Como los botones de la barra: blanco translúcido al pasar por encima y más marcado si está elegido
                     int alpha = Checked ? 55 : hover ? 30 : 0;
                     using (var brush = new SolidBrush(alpha > 0 ? Color.FromArgb(alpha, 255, 255, 255) : Surface)) g.FillPath(brush, path);
@@ -746,7 +720,7 @@ namespace Trazo {
                 Graphics g = e.Graphics;
                 PaintParentBack(this, g);
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-                using (GraphicsPath path = CaptureOverlay.RoundedRect(Inner(this, Focused ? 1 : 0.5f), Radius(this, 7))) {
+                using (GraphicsPath path = Ui.RoundedRect(Inner(this, Focused ? 1 : 0.5f), Radius(this, 7))) {
                     using (var brush = new SolidBrush(Focused ? SurfaceHover : Surface)) g.FillPath(brush, path);
                     using var pen = new Pen(Focused ? AccentLine : Edge, Focused ? 2f : 1f);
                     g.DrawPath(pen, path);

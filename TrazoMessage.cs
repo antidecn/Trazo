@@ -5,15 +5,14 @@ namespace Trazo {
     /// del cuadro de mensaje de Windows. No es modal: mientras está abierto se puede seguir haciendo capturas,
     /// y el teclado de la captura no se lo queda el mensaje.
     /// </summary>
-    internal sealed class TrazoMessage : Form {
+    internal sealed class TrazoMessage : DarkDialog {
 
         private readonly TaskCompletionSource<bool> result = new();
         private readonly Icon windowIcon;
         private readonly Bitmap logoImage;
-        private readonly List<Font> fonts = new();
         private bool accepted;
 
-        /// <summary>Muestra el mensaje y espera a que se cierre.</summary>
+        /// <summary>No es modal: devuelve una tarea que termina al cerrarse el mensaje.</summary>
         /// <param name="accept">Texto del botón principal.</param>
         /// <param name="cancel">Texto del botón secundario; null para un mensaje que solo se acepta.</param>
         /// <param name="link">Línea con un enlace tras el mensaje (opcional): la frase, la parte de ella que es el enlace y su dirección.</param>
@@ -33,15 +32,9 @@ namespace Trazo {
             windowIcon = Icons.AppIcon(SystemInformation.SmallIconSize.Width);
             Icon = windowIcon;
             Font = NewFont("Segoe UI", 9.5f);
-            BackColor = SettingsForm.Back;
-            ForeColor = SettingsForm.TextColor;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
             ShowInTaskbar = true;
             // Encima del resto para que no quede escondido, pero por debajo de una captura que se abra después
             TopMost = true;
-            StartPosition = FormStartPosition.CenterScreen;
             AutoScaleMode = AutoScaleMode.Font;
             AutoSize = true;
             AutoSizeMode = AutoSizeMode.GrowAndShrink;
@@ -98,7 +91,7 @@ namespace Trazo {
                     Margin = new Padding(0, LogicalToDeviceUnits(10), 0, 0),
                     UseMnemonic = false,
                 };
-                linkLabel.LinkClicked += (_, _) => OpenUrl(l.Url);
+                linkLabel.LinkClicked += (_, _) => Ui.OpenUrl(l.Url);
                 texts.Controls.Add(linkLabel);
             }
             if (footer != null) {
@@ -148,33 +141,6 @@ namespace Trazo {
             Controls.Add(layout);
         }
 
-        private static void OpenUrl(string url) {
-            try {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
-            } catch (Exception) {
-                // Sin navegador predeterminado: no hay nada más que hacer
-            }
-        }
-
-        private Font NewFont(string family, float size) {
-            var font = new Font(family, size);
-            fonts.Add(font);
-            return font;
-        }
-
-        protected override void OnHandleCreated(EventArgs e) {
-            base.OnHandleCreated(e);
-            // Barra de título oscura, igual que la configuración
-            int on = 1;
-            NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_USE_IMMERSIVE_DARK_MODE, ref on, sizeof(int));
-            int caption = ColorTranslator.ToWin32(SettingsForm.Back);
-            NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
-            // Sin icono ni título en la barra: ya se sabe que es Trazo (siguen en la barra de tareas)
-            NativeMethods.HideCaption(Handle);
-            int border = ColorTranslator.ToWin32(SettingsForm.Edge);
-            NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_BORDER_COLOR, ref border, sizeof(int));
-        }
-
         protected override void OnShown(EventArgs e) {
             base.OnShown(e);
             // Sin el borde de foco en el botón al abrir
@@ -190,7 +156,6 @@ namespace Trazo {
             if (disposing) {
                 windowIcon.Dispose();
                 logoImage.Dispose();
-                foreach (Font f in fonts) f.Dispose();
             }
             base.Dispose(disposing);
         }

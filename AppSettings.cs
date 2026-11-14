@@ -37,6 +37,9 @@ namespace Trazo {
 
         [DataMember] public float StrokeWidth { get; set; }
 
+        /// <summary>Últimos colores elegidos en el selector (#RRGGBB, el más reciente primero).</summary>
+        [DataMember] public List<string> RecentColors { get; set; } = new();
+
         [DataMember] public string TextFont { get; set; } = "";
 
         /// <summary>Tamaño del texto en píxeles.</summary>
@@ -84,6 +87,7 @@ namespace Trazo {
             StrokeColor = "#E61E1E";
             FillColor = null;
             StrokeWidth = 3;
+            RecentColors = new List<string>();
             TextFont = TextShape.DefaultFontFamily;
             TextSize = 24;
             LastTool = "Arrow";
@@ -99,29 +103,20 @@ namespace Trazo {
 
         public Color BorderColorValue {
             get => ParseColor(BorderColor) ?? Color.FromArgb(200, 200, 200);
-            set => BorderColor = ToHex(value);
+            set => BorderColor = Ui.ToHex(value);
         }
 
         public Color StrokeColorValue {
             get => ParseColor(StrokeColor) ?? Color.FromArgb(230, 30, 30);
-            set => StrokeColor = ToHex(value);
+            set => StrokeColor = Ui.ToHex(value);
         }
 
         public Color? FillColorValue {
             get => ParseColor(FillColor);
-            set => FillColor = value is Color c ? ToHex(c) : null;
+            set => FillColor = value is Color c ? Ui.ToHex(c) : null;
         }
 
-        private static string ToHex(Color c) => $"#{c.R:X2}{c.G:X2}{c.B:X2}";
-
-        private static Color? ParseColor(string? hex) {
-            if (string.IsNullOrWhiteSpace(hex)) return null;
-            try {
-                return ColorTranslator.FromHtml(hex);
-            } catch (Exception) {
-                return null;
-            }
-        }
+        private static Color? ParseColor(string? hex) => Ui.TryParseHex(hex, out Color c) ? c : null;
 
         /// <summary>No existía archivo de configuración: es la primera vez que se abre.</summary>
         public bool IsFirstRun { get; private set; }

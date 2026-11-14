@@ -6,7 +6,7 @@ namespace Trazo {
     /// Ayuda: todos los atajos de Trazo en dos columnas, con el mismo aspecto oscuro que la configuración
     /// y cada tecla dibujada como una tecla.
     /// </summary>
-    internal sealed class ShortcutsForm : Form {
+    internal sealed class ShortcutsForm : DarkDialog {
 
         /// <summary>
         /// Una fila: descripción y teclas. En las teclas, "+" une las que se pulsan a la vez y "|" separa alternativas.
@@ -36,6 +36,7 @@ namespace Trazo {
                     new Section("Captura", new[] {
                         new Row("Hacer una captura", capture),
                         new Row("Elegir el monitor entero", "Clic sin arrastrar"),
+                        new Row("Leer el texto de una zona y copiarlo", "Arrastrar con clic derecho"),
                         new Row("Copiar el color bajo el cursor (antes de elegir zona)", "Ctrl+C"),
                         new Row("Cerrar sin guardar", "Esc|Clic derecho"),
                     }),
@@ -73,41 +74,22 @@ namespace Trazo {
 
             Text = "Atajos de teclado de Trazo";
             Icon = icon;
-            BackColor = SettingsForm.Back;
-            ForeColor = SettingsForm.TextColor;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
             ShowInTaskbar = true;
-            StartPosition = FormStartPosition.CenterScreen;
             KeyPreview = true;
             AutoScaleMode = AutoScaleMode.None;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
 
             float s = DeviceDpi / 96f;
-            textFont = new Font("Segoe UI", 9.5f * 96f / 72f * s, FontStyle.Regular, GraphicsUnit.Pixel);
-            titleFont = new Font("Segoe UI Semibold", 10f * 96f / 72f * s, FontStyle.Regular, GraphicsUnit.Pixel);
-            keyFont = new Font("Segoe UI", 8.5f * 96f / 72f * s, FontStyle.Regular, GraphicsUnit.Pixel);
-            headerFont = new Font("Segoe UI Semibold", 14f * 96f / 72f * s, FontStyle.Regular, GraphicsUnit.Pixel);
+            textFont = NewFont("Segoe UI", 9.5f * 96f / 72f * s, GraphicsUnit.Pixel);
+            titleFont = NewFont("Segoe UI Semibold", 10f * 96f / 72f * s, GraphicsUnit.Pixel);
+            keyFont = NewFont("Segoe UI", 8.5f * 96f / 72f * s, GraphicsUnit.Pixel);
+            headerFont = NewFont("Segoe UI Semibold", 14f * 96f / 72f * s, GraphicsUnit.Pixel);
 
             ClientSize = LayoutContent(null);
         }
 
         private float UiScale => DeviceDpi / 96f;
         private int Px(float logical) => (int)Math.Round(logical * UiScale);
-
-        protected override void OnHandleCreated(EventArgs e) {
-            base.OnHandleCreated(e);
-            // Barra de título oscura, igual que la configuración
-            int on = 1;
-            NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_USE_IMMERSIVE_DARK_MODE, ref on, sizeof(int));
-            int caption = ColorTranslator.ToWin32(SettingsForm.Back);
-            NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
-            // Sin icono ni título en la barra: ya se sabe que es Trazo (siguen en la barra de tareas)
-            NativeMethods.HideCaption(Handle);
-            int border = ColorTranslator.ToWin32(SettingsForm.Edge);
-            NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_BORDER_COLOR, ref border, sizeof(int));
-        }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData) {
             if (keyData == Keys.Escape) {
@@ -205,7 +187,7 @@ namespace Trazo {
                     if (i > 0) x = DrawSeparator(g, "+", x, rowY, rowHeight);
                     int w = KeyWidth(alt[i]);
                     var r = new RectangleF(x + 0.5f, y + 0.5f, w - 1, KeyHeight - 1);
-                    using (GraphicsPath path = CaptureOverlay.RoundedRect(r, 5 * UiScale)) {
+                    using (GraphicsPath path = Ui.RoundedRect(r, 5 * UiScale)) {
                         using var fill = new SolidBrush(SettingsForm.Surface);
                         g.FillPath(fill, path);
                         using var edge = new Pen(SettingsForm.Edge);
@@ -229,16 +211,6 @@ namespace Trazo {
             TextRenderer.DrawText(g, text, keyFont, new Rectangle(x, rowY, w, rowHeight), SettingsForm.SubText,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             return x + w + KeyGap;
-        }
-
-        protected override void Dispose(bool disposing) {
-            if (disposing) {
-                textFont.Dispose();
-                titleFont.Dispose();
-                keyFont.Dispose();
-                headerFont.Dispose();
-            }
-            base.Dispose(disposing);
         }
     }
 }

@@ -94,11 +94,7 @@ namespace Trazo {
 
         protected override void OnHandleCreated(EventArgs e) {
             base.OnHandleCreated(e);
-            // Windows 11: esquinas redondeadas y borde fino, como el menú de la bandeja
-            int corners = NativeMethods.DWMWCP_ROUND;
-            NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE, ref corners, sizeof(int));
-            int border = ColorTranslator.ToWin32(SettingsForm.Edge);
-            NativeMethods.DwmSetWindowAttribute(Handle, NativeMethods.DWMWA_BORDER_COLOR, ref border, sizeof(int));
+            Ui.StylePopup(Handle);
         }
 
         protected override void OnShown(EventArgs e) {
@@ -171,11 +167,7 @@ namespace Trazo {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
 
-            // Borde fino en Windows 10 (en Windows 11 lo pone el sistema)
-            if (Environment.OSVersion.Version.Build < 22000) {
-                using var edge = new Pen(SettingsForm.Edge);
-                g.DrawRectangle(edge, 0, 0, Width - 1, Height - 1);
-            }
+            Ui.DrawWindows10Border(g, Size);
 
             int pad = Px(16);
             g.DrawImage(logo, new Rectangle(pad, pad, LogoSize, LogoSize));
@@ -191,7 +183,7 @@ namespace Trazo {
             // Cruz de cerrar
             if (hover == closeButton) {
                 using var back = new SolidBrush(SettingsForm.SurfaceHover);
-                using GraphicsPath circle = CaptureOverlay.RoundedRect(closeButton, closeButton.Width / 2f);
+                using GraphicsPath circle = Ui.RoundedRect(closeButton, closeButton.Width / 2f);
                 g.FillPath(back, circle);
             }
             float c = Px(4.5f);
@@ -202,12 +194,12 @@ namespace Trazo {
             }
         }
 
-        /// <summary>Botón redondeado como los de la configuración: azul el principal y gris oscuro el otro.</summary>
+        /// <summary>Botón redondeado como los de la configuración (<see cref="SettingsForm.DarkButton"/>).</summary>
         private void DrawButton(Graphics g, Rectangle r, string text, bool primary) {
             bool over = hover == r;
-            Color fill = primary ? (over ? SettingsForm.AccentHover : SettingsForm.Accent) : (over ? SettingsForm.SurfaceHover : SettingsForm.Surface);
+            Color fill = SettingsForm.DarkButton.FaceColor(primary, over, pressed: false);
             var rect = new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1, r.Height - 1);
-            using (GraphicsPath path = CaptureOverlay.RoundedRect(rect, 6 * scale)) {
+            using (GraphicsPath path = Ui.RoundedRect(rect, 6 * scale)) {
                 using var brush = new SolidBrush(fill);
                 g.FillPath(brush, path);
                 if (!primary) {

@@ -121,6 +121,13 @@ namespace Trazo {
                 return;
             }
 
+            // Un aviso de la captura anterior que siga en pantalla saldría en la imagen: se cierra antes
+            // y se da tiempo a Windows para redibujar lo que tapaba
+            if (Toast.CloseCurrent()) {
+                Application.DoEvents();
+                Thread.Sleep(60);
+            }
+
             Bitmap shot = ScreenCapture.CaptureVirtualScreen(out Rectangle bounds);
             overlay = new CaptureOverlay(shot, bounds, settings);
             overlay.FormClosed += (_, _) => overlay = null;

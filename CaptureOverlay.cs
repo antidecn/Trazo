@@ -26,7 +26,6 @@ namespace Trazo {
         private static readonly Color EdgeGray = Color.FromArgb(85, 85, 90);
         /// <summary>Borde fino de la barra de herramientas y la lupa.</summary>
         private static readonly Color GlassEdge = Color.FromArgb(70, 255, 255, 255);
-        private static readonly Color CardBack = Color.FromArgb(235, 28, 28, 30);
         private static readonly float[] Widths = { 2, 3, 5, 8 };
 
         // Fuentes habituales de Windows que se ofrecen directamente; el resto, con "Otra fuente…"
@@ -48,6 +47,8 @@ namespace Trazo {
         private Phase phase = Phase.Selecting;
         private Rectangle selection;
         private Point? selectStart;
+        /// <summary>Botón con el que se elige la zona: el derecho la lleva directamente al lector de texto.</summary>
+        private MouseButtons selectButton;
         private Edge resizing;
         // Botón para mover la zona entera: esquina elegida (0 arriba izq., 1 arriba der., 2 abajo izq., 3 abajo der.)
         // y si va dentro de la zona porque fuera no cabe
@@ -117,19 +118,16 @@ namespace Trazo {
         private ToolStripButton strokeButton = null!;
         private ToolStripDropDownButton fillButton = null!;
         private ToolStripDropDownButton widthButton = null!;
-        // Solo visibles con la herramienta Texto o un texto seleccionado
-        private ToolStripSeparator textSeparator = null!;
-        private ToolStripDropDownButton fontButton = null!;
-        private ToolStripDropDownButton sizeButton = null!;
+        // Texto: el botón activa la herramienta y su desplegable elige fuente y tamaño (submenús)
+        private ToolStripSplitButton textButton = null!;
+        private ToolStripMenuItem fontMenu = null!;
+        private ToolStripMenuItem sizeMenu = null!;
         private Bitmap? toolbarBackdrop;
         private Bitmap? magnifierCard;
         private readonly List<Font> previewFonts = new();
         private readonly int iconSize;
         private readonly Font uiFont;
-        private readonly Font labelFont;
-        private readonly Font cardTitleFont;
-        private readonly Font cardBodyFont;
-        private readonly Font cardFootFont;
+        private readonly CardStyle cards;
 
         public CaptureOverlay(Bitmap screenshot, Rectangle virtualBounds, AppSettings settings) {
             this.screenshot = screenshot;
@@ -149,10 +147,7 @@ namespace Trazo {
             scale = DeviceDpi / 96f;
             iconSize = (int)Math.Round(20 * scale);
             uiFont = new Font("Segoe UI", 9f);
-            labelFont = new Font("Segoe UI", 12f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
-            cardTitleFont = new Font("Segoe UI Semibold", 12f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
-            cardBodyFont = new Font("Segoe UI", 13.5f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
-            cardFootFont = new Font("Segoe UI", 11f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+            cards = new CardStyle(scale);
             showGuides = settings.ShowGuides;
 
             AutoScaleMode = AutoScaleMode.None;
@@ -235,17 +230,20 @@ namespace Trazo {
                 toolbarBackdrop?.Dispose();
                 magnifierCard?.Dispose();
                 foreach (Font f in previewFonts) f.Dispose();
-                foreach (ToolStripItem item in toolbar.Items) {
-                    item.Image?.Dispose();
-                    if (item is ToolStripDropDownItem dd) {
-                        foreach (ToolStripItem sub in dd.DropDownItems) sub.Image?.Dispose();
+                // Iconos de la barra y de sus desplegables y submenús; los desplegables propios
+                // (DarkMenu.Style) no se liberan solos con su botón
+                void DisposeItems(ToolStripItemCollection items) {
+                    foreach (ToolStripItem item in items) {
+                        item.Image?.Dispose();
+                        if (item is ToolStripDropDownItem { HasDropDownItems: true } dd) {
+                            DisposeItems(dd.DropDownItems);
+                            if (!dd.DropDown.IsDisposed) dd.DropDown.Dispose();
+                        }
                     }
                 }
+                DisposeItems(toolbar.Items);
                 uiFont.Dispose();
-                labelFont.Dispose();
-                cardTitleFont.Dispose();
-                cardBodyFont.Dispose();
-                cardFootFont.Dispose();
+                cards.Dispose();
             }
             base.Dispose(disposing);
             // Después de cerrar la ventana, cuando ya no se está mostrando
@@ -314,49 +312,71 @@ namespace Trazo {
                 return b;
             }
 
-            ToolStripDropDownButton TextDropDown(string tip) {
-                var b = new ToolStripDropDownButton {
-                    DisplayStyle = ToolStripItemDisplayStyle.Text,
+            void AddTool(Tool t, IconKind icon, string tip) => toolButtons[t] = IconButton(icon, tip, () => SetTool(t));
+
+            // Botón de herramienta con desplegable: activa la herramienta y, si ya está activa, abre el desplegable
+            ToolStripSplitButton SplitTool(string tip, Action select) {
+                int pad = (int)Math.Round(4 * scale);
+                var b = new ToolStripSplitButton {
+                    DisplayStyle = ToolStripItemDisplayStyle.Image,
                     ToolTipText = tip,
                     AutoToolTip = false,
-                    Padding = new Padding((int)Math.Round(4 * scale), 0, (int)Math.Round(2 * scale), 0),
+                    // Sin relleno a la derecha: la flecha del desplegable queda pegada al icono
+                    Padding = new Padding(pad, pad, 0, pad),
                     Margin = new Padding(1, 0, 1, 0),
+                    DropDownButtonWidth = (int)Math.Round(9 * scale),
+                };
+                b.ButtonClick += (_, _) => {
+                    if (IsActive(b)) b.ShowDropDown();
+                    else select();
                 };
                 strip.Items.Add(b);
                 return b;
             }
 
-            void AddTool(Tool t, IconKind icon, string tip) => toolButtons[t] = IconButton(icon, tip, () => SetTool(t));
-
             AddTool(Tool.Rectangle, IconKind.Rectangle, "Rectángulo (R)\nMayús: cuadrado");
             AddTool(Tool.Ellipse, IconKind.Ellipse, "Elipse (E)\nMayús: círculo");
-            arrowButton = new ToolStripSplitButton {
-                DisplayStyle = ToolStripItemDisplayStyle.Image,
-                ToolTipText = "Flechas\nFlecha (A) · Mayús: horizontal / vertical\n" +
-                              "Pintar flecha (F): dibuja el recorrido a mano y Trazo lo endereza\n" +
-                              "F otra vez: recto / redondeado · Mayús: sin diagonales",
-                AutoToolTip = false,
-                Padding = new Padding((int)Math.Round(4 * scale)),
-                Margin = new Padding(1, 0, 1, 0),
-                DropDownButtonWidth = (int)Math.Round(12 * scale),
-            };
             // El botón vuelve a la última flecha usada; el desplegable elige entre las tres
-            arrowButton.ButtonClick += (_, _) => SetTool(arrowTool);
-            var simple = new ToolStripMenuItem("Flecha", Icons.Create(IconKind.Arrow, iconSize, Icons.DarkInk)) { Tag = ArrowMode.Simple };
+            arrowButton = SplitTool("Flechas\nFlecha (A) · Mayús: horizontal / vertical\n" +
+                                    "Pintar flecha (F): dibuja el recorrido a mano y Trazo lo endereza\n" +
+                                    "F otra vez: recto / redondeado · Mayús: sin diagonales", () => SetTool(arrowTool));
+            var simple = new ToolStripMenuItem("Flecha", Icons.Create(IconKind.Arrow, iconSize, Icons.LightInk)) { Tag = ArrowMode.Simple };
             simple.Click += (_, _) => SetTool(Tool.Arrow);
             arrowButton.DropDownItems.Add(simple);
             foreach (bool rounded in new[] { false, true }) {
                 var item = new ToolStripMenuItem(rounded ? "Redondeado" : "Recto",
-                    Icons.Create(rounded ? IconKind.PathArrowRounded : IconKind.PathArrowStraight, iconSize, Icons.DarkInk)) {
+                    Icons.Create(rounded ? IconKind.PathArrowRounded : IconKind.PathArrowStraight, iconSize, Icons.LightInk)) {
                     Tag = rounded ? ArrowMode.Rounded : ArrowMode.Straight,
                 };
                 item.Click += (_, _) => SetPathMode(rounded);
                 arrowButton.DropDownItems.Add(item);
             }
-            strip.Items.Add(arrowButton);
             UpdateArrowButton();
             AddTool(Tool.Line, IconKind.Line, "Línea (L)\nMayús: horizontal / vertical");
-            AddTool(Tool.Text, IconKind.Text, "Texto (T)\nIntro: aceptar · Mayús+Intro: nueva línea\nDoble clic en un texto seleccionado para editarlo");
+            textButton = SplitTool("Texto (T)\nIntro: aceptar · Mayús+Intro: nueva línea\nDoble clic en un texto seleccionado para editarlo\n" +
+                                   "Desplegable: fuente y tamaño", () => SetTool(Tool.Text));
+            textButton.Image = Icons.Create(IconKind.Text, iconSize, Icons.LightInk);
+
+            // Fuente y tamaño: se aplican al texto seleccionado o en edición, y a los siguientes
+            fontMenu = new ToolStripMenuItem("Fuente");
+            var installed = new HashSet<string>(FontFamily.Families.Select(f => f.Name), StringComparer.OrdinalIgnoreCase);
+            foreach (string name in CommonFonts.Where(installed.Contains)) {
+                var item = new ToolStripMenuItem(name) { Font = new Font(name, 10f), Tag = name };
+                previewFonts.Add(item.Font);
+                item.Click += (_, _) => SetTextFont(name);
+                fontMenu.DropDownItems.Add(item);
+            }
+            fontMenu.DropDownItems.Add(new ToolStripSeparator());
+            fontMenu.DropDownItems.Add("Otra fuente…", null, (_, _) => PickOtherFont());
+
+            sizeMenu = new ToolStripMenuItem("Tamaño");
+            foreach (float s in TextSizes) {
+                var item = new ToolStripMenuItem($"{s} px") { Tag = s };
+                item.Click += (_, _) => SetTextSize(s);
+                sizeMenu.DropDownItems.Add(item);
+            }
+            textButton.DropDownItems.Add(fontMenu);
+            textButton.DropDownItems.Add(sizeMenu);
             strip.Items.Add(new ToolStripSeparator());
 
             ToolStripDropDownButton DropDown(string tip) {
@@ -396,7 +416,7 @@ namespace Trazo {
 
             widthButton = DropDown("Grosor de líneas y bordes");
             foreach (float w in Widths) {
-                var item = new ToolStripMenuItem($"{w} px", Icons.Line(w, iconSize, Icons.DarkInk));
+                var item = new ToolStripMenuItem($"{w} px", Icons.Line(w, iconSize, Icons.LightInk));
                 item.Click += (_, _) => {
                     strokeWidth = w;
                     DrawingStyleChanged(s => s.Width = strokeWidth);
@@ -404,27 +424,12 @@ namespace Trazo {
                 widthButton.DropDownItems.Add(item);
             }
 
-            // Fuente y tamaño del texto
-            textSeparator = new ToolStripSeparator();
-            strip.Items.Add(textSeparator);
-            fontButton = TextDropDown("Fuente del texto");
-            var installed = new HashSet<string>(FontFamily.Families.Select(f => f.Name), StringComparer.OrdinalIgnoreCase);
-            foreach (string name in CommonFonts.Where(installed.Contains)) {
-                var item = new ToolStripMenuItem(name) { Font = new Font(name, 10f), Tag = name };
-                previewFonts.Add(item.Font);
-                item.Click += (_, _) => SetTextFont(name);
-                fontButton.DropDownItems.Add(item);
-            }
-            fontButton.DropDownItems.Add(new ToolStripSeparator());
-            fontButton.DropDownItems.Add("Otra fuente…", null, (_, _) => PickOtherFont());
-
-            sizeButton = TextDropDown("Tamaño del texto");
-            foreach (float s in TextSizes) {
-                var item = new ToolStripMenuItem($"{s} px") { Tag = s };
-                item.Click += (_, _) => SetTextSize(s);
-                sizeButton.DropDownItems.Add(item);
-            }
             strip.Items.Add(new ToolStripSeparator());
+
+            // Desplegables oscuros, como el menú de la bandeja (también los submenús de fuente y tamaño)
+            foreach (ToolStripDropDownItem dd in new ToolStripDropDownItem[] { arrowButton, textButton, fontMenu, sizeMenu, fillButton, widthButton }) {
+                DarkMenu.Style(dd);
+            }
 
             AddTool(Tool.Pixelate, IconKind.Pixelate, "Pixelar (P)\nOculta lo que hay debajo de la zona");
             AddTool(Tool.Picker, IconKind.Picker, "Cuentagotas (I)\nCopia el color de un píxel");
@@ -437,7 +442,7 @@ namespace Trazo {
             IconButton(IconKind.Close, "Cerrar sin guardar (Esc)", Close);
 
             UpdateSwatches();
-            UpdateTextControls(strip);
+            UpdateTextControls();
             return strip;
         }
 
@@ -460,6 +465,10 @@ namespace Trazo {
         private enum ArrowMode { Simple, Straight, Rounded }
 
         private ArrowMode CurrentArrowMode => arrowTool == Tool.Arrow ? ArrowMode.Simple : pathRounded ? ArrowMode.Rounded : ArrowMode.Straight;
+
+        /// <summary>Si la herramienta de un botón con desplegable (flechas o texto) es la elegida.</summary>
+        private bool IsActive(ToolStripSplitButton button) =>
+            button == arrowButton ? tool is Tool.Arrow or Tool.PathArrow : button == textButton && tool == Tool.Text;
 
         /// <summary>El icono del botón de flechas es el de la última flecha usada, que queda marcada en el desplegable.</summary>
         private void UpdateArrowButton() {
@@ -506,30 +515,21 @@ namespace Trazo {
         }
 
         /// <summary>
-        /// Fuente y tamaño se muestran con la herramienta Texto o con un texto seleccionado o en edición,
-        /// y reflejan los de ese texto.
+        /// El desplegable de Texto muestra la fuente y el tamaño del texto seleccionado o en edición
+        /// (o los que se usarán en el siguiente).
         /// </summary>
-        private void UpdateTextControls() => UpdateTextControls(toolbar);
-
-        private void UpdateTextControls(ToolStrip strip) {
+        private void UpdateTextControls() {
             TextShape? text = editingText ?? selected as TextShape;
             string font = text?.FontFamily ?? textFont;
             float size = text?.FontSize ?? textSize;
 
-            fontButton.Text = font.Length > 16 ? font.Substring(0, 15) + "…" : font;
-            sizeButton.Text = $"{size} px";
-            foreach (ToolStripItem item in fontButton.DropDownItems) {
+            fontMenu.Text = $"Fuente: {(font.Length > 20 ? font.Substring(0, 19) + "…" : font)}";
+            sizeMenu.Text = $"Tamaño: {size} px";
+            foreach (ToolStripItem item in fontMenu.DropDownItems) {
                 if (item is ToolStripMenuItem m && m.Tag is string name) m.Checked = name.Equals(font, StringComparison.OrdinalIgnoreCase);
             }
-            foreach (ToolStripMenuItem item in sizeButton.DropDownItems) {
-                item.Checked = item.Tag is float s && s == size;
-            }
-
-            bool show = phase == Phase.Editing && (tool == Tool.Text || text != null);
-            if (fontButton.Available != show) {
-                textSeparator.Available = fontButton.Available = sizeButton.Available = show;
-                // La barra cambia de ancho: se recoloca y se recalcula el fondo difuminado
-                if (strip.Visible) PositionToolbar();
+            foreach (ToolStripItem item in sizeMenu.DropDownItems) {
+                if (item is ToolStripMenuItem m) m.Checked = m.Tag is float s && s == size;
             }
         }
 
@@ -562,8 +562,10 @@ namespace Trazo {
         }
 
         private Color? PickWithDialog(Color current) {
-            using var dialog = new ColorDialog { Color = current, FullOpen = true, AnyColor = true };
-            return dialog.ShowDialog(this) == DialogResult.OK ? dialog.Color : null;
+            settings.RecentColors ??= new List<string>();
+            Color? picked = ColorPicker.Pick(this, current, settings.RecentColors);
+            if (picked != null) settingsChanged = true;
+            return picked;
         }
 
         /// <summary>Herramientas que se recuerdan entre capturas; el cuentagotas y Pixelar, no.</summary>
@@ -588,6 +590,7 @@ namespace Trazo {
             }
             // El botón partido no tiene estado marcado: el renderizador lo resalta según la herramienta
             arrowButton.Invalidate();
+            textButton.Invalidate();
             if (IsDrawingTool(t) && settings.LastTool != t.ToString()) {
                 settings.LastTool = t.ToString();
                 settingsChanged = true;
@@ -597,7 +600,10 @@ namespace Trazo {
             Invalidate(MagnifierRect(mouse));
         }
 
-        private Cursor ToolCursor => phase == Phase.Selecting ? crossCursor.Cursor : tool switch {
+        private Cursor ToolCursor => phase == Phase.Selecting ? crossCursor.Cursor
+            // Fuera de la zona no se puede dibujar: cursor normal sea cual sea la herramienta
+            : !selection.Contains(mouse) ? Cursors.Default
+            : tool switch {
             Tool.Text => Cursors.IBeam,
             // Elegida la zona, la cruz deja paso al cursor normal del usuario
             _ => Cursors.Default,
@@ -665,7 +671,7 @@ namespace Trazo {
 
         /// <summary>
         /// Barra con aspecto de cristal: fondo difuminado con un velo gris translúcido, esquinas redondeadas
-        /// y botones con resaltado suave. Los menús desplegables mantienen el estilo normal.
+        /// y botones con resaltado suave. Los desplegables usan el estilo de <see cref="DarkMenu.Style"/>.
         /// </summary>
         private sealed class GlassToolbarRenderer : ToolStripProfessionalRenderer {
 
@@ -679,12 +685,10 @@ namespace Trazo {
             private int Radius => (int)Math.Round(12 * owner.scale);
 
             protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e) {
-                if (e.ToolStrip is ToolStripDropDown) { base.OnRenderToolStripBackground(e); return; }
-
                 Graphics g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 var r = new Rectangle(0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
-                using GraphicsPath path = RoundedRect(r, Radius);
+                using GraphicsPath path = Ui.RoundedRect(r, Radius);
 
                 if (owner.toolbarBackdrop is Bitmap backdrop) {
                     GraphicsState state = g.Save();
@@ -697,53 +701,46 @@ namespace Trazo {
             }
 
             protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e) {
-                if (e.ToolStrip is ToolStripDropDown) base.OnRenderToolStripBorder(e);
+                // El borde ya va en el fondo, redondeado
             }
 
             protected override void OnRenderButtonBackground(ToolStripItemRenderEventArgs e) {
-                if (e.ToolStrip is ToolStripDropDown) { base.OnRenderButtonBackground(e); return; }
                 var button = (ToolStripButton)e.Item;
-                DrawHighlight(e.Graphics, e.Item, button.Pressed ? 75 : button.Checked ? 60 : button.Selected ? 35 : 0);
+                DrawHighlight(e.Graphics, e.Item, button.Pressed, button.Checked);
             }
 
-            protected override void OnRenderDropDownButtonBackground(ToolStripItemRenderEventArgs e) {
-                if (e.ToolStrip is ToolStripDropDown) { base.OnRenderDropDownButtonBackground(e); return; }
-                DrawHighlight(e.Graphics, e.Item, e.Item.Pressed ? 75 : e.Item.Selected ? 35 : 0);
-            }
+            protected override void OnRenderDropDownButtonBackground(ToolStripItemRenderEventArgs e) =>
+                DrawHighlight(e.Graphics, e.Item, e.Item.Pressed, active: false);
 
             protected override void OnRenderSplitButtonBackground(ToolStripItemRenderEventArgs e) {
-                if (e.ToolStrip is ToolStripDropDown) { base.OnRenderSplitButtonBackground(e); return; }
                 var button = (ToolStripSplitButton)e.Item;
-                bool active = button == owner.arrowButton && owner.tool is Tool.Arrow or Tool.PathArrow;
-                DrawHighlight(e.Graphics, e.Item, button.ButtonPressed || button.DropDownButtonPressed ? 75 : active ? 60 : button.Selected ? 35 : 0);
-                DrawArrow(new ToolStripArrowRenderEventArgs(e.Graphics, button, button.DropDownButtonBounds, Icons.LightInk, ArrowDirection.Down));
+                DrawHighlight(e.Graphics, e.Item, button.ButtonPressed || button.DropDownButtonPressed, owner.IsActive(button));
+                // Un poco a la izquierda del centro de su zona, para que quede pegada al icono
+                Rectangle arrowBounds = button.DropDownButtonBounds;
+                arrowBounds.Offset(-(int)Math.Round(2 * owner.scale), 0);
+                DrawArrow(new ToolStripArrowRenderEventArgs(e.Graphics, button, arrowBounds, Icons.LightInk, ArrowDirection.Down));
             }
 
-            private void DrawHighlight(Graphics g, ToolStripItem item, int alpha) {
+            /// <summary>Velo blanco redondeado: más intenso al pulsar, medio en la herramienta activa y suave al pasar por encima.</summary>
+            private void DrawHighlight(Graphics g, ToolStripItem item, bool pressed, bool active) {
+                int alpha = pressed ? 75 : active ? 60 : item.Selected ? 35 : 0;
                 if (alpha == 0) return;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 var r = new Rectangle(0, 0, item.Width - 1, item.Height - 1);
-                using GraphicsPath path = RoundedRect(r, (int)Math.Round(6 * owner.scale));
+                using GraphicsPath path = Ui.RoundedRect(r, (int)Math.Round(6 * owner.scale));
                 using var brush = new SolidBrush(Color.FromArgb(alpha, 255, 255, 255));
                 g.FillPath(brush, path);
             }
 
             protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e) {
-                if (e.ToolStrip is ToolStripDropDown) { base.OnRenderSeparator(e); return; }
                 int x = e.Item.Width / 2;
                 int margin = e.Item.Height / 4;
                 using var pen = new Pen(Color.FromArgb(70, 255, 255, 255), 1f);
                 e.Graphics.DrawLine(pen, x, margin, x, e.Item.Height - margin);
             }
 
-            protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e) {
-                // Texto claro en la barra oscura; normal en los menús desplegables
-                e.TextColor = e.ToolStrip is ToolStripDropDown ? SystemColors.MenuText : Icons.LightInk;
-                base.OnRenderItemText(e);
-            }
-
             protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e) {
-                if (e.Item?.Owner is not ToolStripDropDown) e.ArrowColor = Icons.LightInk;
+                e.ArrowColor = Icons.LightInk;
                 base.OnRenderArrow(e);
             }
         }
@@ -825,7 +822,7 @@ namespace Trazo {
             }
 
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            using GraphicsPath rounded = RoundedRect(new Rectangle(selection.X, selection.Y, selection.Width - 1, selection.Height - 1), radius);
+            using GraphicsPath rounded = Ui.RoundedRect(new Rectangle(selection.X, selection.Y, selection.Width - 1, selection.Height - 1), radius);
             using (var ring = new GraphicsPath(FillMode.Alternate)) {
                 ring.AddRectangle(new RectangleF(selection.X - 0.5f, selection.Y - 0.5f, selection.Width, selection.Height));
                 ring.AddPath(rounded, false);
@@ -849,7 +846,7 @@ namespace Trazo {
         }
 
         private Rectangle SizeLabelRect(Rectangle sel) {
-            Size size = TextRenderer.MeasureText($"{sel.Width} × {sel.Height}", labelFont);
+            Size size = TextRenderer.MeasureText($"{sel.Width} × {sel.Height}", cards.Label);
             var r = new Rectangle(sel.X, sel.Y - size.Height - 8, size.Width + 10, size.Height + 4);
             if (r.Y < ScreenAreaFor(sel).Top) r.Y = sel.Y + 4;
             return r;
@@ -859,9 +856,9 @@ namespace Trazo {
             Rectangle r = SizeLabelRect(selection);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             using var back = new SolidBrush(Color.FromArgb(210, 20, 20, 20));
-            using GraphicsPath path = RoundedRect(r, Math.Min((int)Math.Round(5 * scale), r.Height / 2));
+            using GraphicsPath path = Ui.RoundedRect(r, Math.Min((int)Math.Round(5 * scale), r.Height / 2));
             g.FillPath(back, path);
-            TextRenderer.DrawText(g, $"{selection.Width} × {selection.Height}", labelFont, r, Color.White,
+            TextRenderer.DrawText(g, $"{selection.Width} × {selection.Height}", cards.Label, r, Color.White,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
 
@@ -902,22 +899,21 @@ namespace Trazo {
                     MagnifierZoom, MagnifierZoom);
                 cg.DrawRectangle(Pens.White, center);
 
-                Color c = PixelAt(mouse);
-                TextRenderer.DrawText(cg, $"#{c.R:X2}{c.G:X2}{c.B:X2}   {mouse.X + virtualBounds.X}, {mouse.Y + virtualBounds.Y}",
-                    labelFont, new Rectangle(0, size, size, LabelHeight), Color.White, Color.Black,
+                TextRenderer.DrawText(cg, $"{Ui.ToHex(PixelAt(mouse))}   {mouse.X + virtualBounds.X}, {mouse.Y + virtualBounds.Y}",
+                    cards.Label, new Rectangle(0, size, size, LabelHeight), Color.White, Color.Black,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             }
 
             using var texture = new TextureBrush(magnifierCard);
             texture.TranslateTransform(card.X, card.Y);
-            using GraphicsPath path = RoundedRect(card, radius);
+            using GraphicsPath path = Ui.RoundedRect(card, radius);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.PixelOffsetMode = PixelOffsetMode.Half;
             g.FillPath(texture, path);
             g.PixelOffsetMode = PixelOffsetMode.Default;
 
             // Borde fino que contrasta con lo que hay debajo: claro sobre zonas oscuras y oscuro sobre zonas claras
-            using GraphicsPath edgePath = RoundedRect(new Rectangle(card.X, card.Y, card.Width - 1, card.Height - 1), radius);
+            using GraphicsPath edgePath = Ui.RoundedRect(new Rectangle(card.X, card.Y, card.Width - 1, card.Height - 1), radius);
             using var edge = new Pen(EdgeColorUnder(card), 1f);
             g.DrawPath(edge, edgePath);
         }
@@ -945,6 +941,9 @@ namespace Trazo {
         private Color PixelAt(Point p) =>
             p.X >= 0 && p.Y >= 0 && p.X < screenshot.Width && p.Y < screenshot.Height ? screenshot.GetPixel(p.X, p.Y) : Color.Black;
 
+        /// <summary>Fondo de los avisos dentro de la captura: el de las tarjetas, algo translúcido.</summary>
+        private static readonly Color CardBack = Color.FromArgb(235, CardStyle.Back);
+
         /// <param name="swatch">Si se indica, se muestra una muestra de ese color a la izquierda del texto.</param>
         private void ShowStatus(string? message, Color? swatch = null) {
             Invalidate(statusRect);
@@ -952,60 +951,16 @@ namespace Trazo {
             statusSwatch = swatch;
             statusTimer.Stop();
             if (message == null) return;
-
-            Size text = TextRenderer.MeasureText(message, labelFont);
-            int padX = (int)(14 * scale), padY = (int)(8 * scale);
-            int swatchWidth = swatch != null ? SwatchSize + padX / 2 * 2 : 0;
-            int width = text.Width + swatchWidth + padX * 2;
-            int height = Math.Max(text.Height, swatch != null ? SwatchSize : 0) + padY * 2;
+            // Ocupan el mismo sitio: un aviso nuevo sustituye al texto leído
+            HideOcrPreview();
 
             Rectangle area = ScreenAreaFor(selection.IsEmpty ? new Rectangle(mouse, new Size(1, 1)) : selection);
-            statusRect = new Rectangle(area.Left + (area.Width - width) / 2, area.Top + (int)(16 * scale), width, height);
+            statusRect = cards.TopCenter(area, cards.MeasureMessage(message, swatch != null));
             Invalidate(statusRect);
             statusTimer.Start();
         }
 
-        private int SwatchSize => (int)(26 * scale);
-
-        private void DrawStatus(Graphics g) {
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            using (var path = RoundedRect(statusRect, (int)(8 * scale)))
-            using (var back = new SolidBrush(CardBack)) {
-                g.FillPath(back, path);
-            }
-
-            Rectangle textRect = statusRect;
-            if (statusSwatch is Color c) {
-                int padX = (int)(14 * scale);
-                var swatch = new Rectangle(statusRect.X + padX, statusRect.Y + (statusRect.Height - SwatchSize) / 2, SwatchSize, SwatchSize);
-                using (var path = RoundedRect(swatch, (int)(5 * scale)))
-                using (var fill = new SolidBrush(c))
-                using (var border = new Pen(Color.FromArgb(200, 255, 255, 255), 1.5f)) {
-                    g.FillPath(fill, path);
-                    g.DrawPath(border, path);
-                }
-                textRect = Rectangle.FromLTRB(swatch.Right + padX / 2, statusRect.Y, statusRect.Right - padX / 2, statusRect.Bottom);
-            }
-            TextRenderer.DrawText(g, status, labelFont, textRect, Color.White,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-        }
-
-        internal static GraphicsPath RoundedRect(Rectangle r, int radius) => RoundedRect((RectangleF)r, radius);
-
-        internal static GraphicsPath RoundedRect(RectangleF r, float radius) {
-            float d = radius * 2;
-            var path = new GraphicsPath();
-            if (d <= 0) {
-                path.AddRectangle(r);
-                return path;
-            }
-            path.AddArc(r.X, r.Y, d, d, 180, 90);
-            path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-            path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-            path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-            path.CloseFigure();
-            return path;
-        }
+        private void DrawStatus(Graphics g) => cards.DrawMessage(g, statusRect, status!, statusSwatch, CardBack);
 
         private void InvalidateShape(Shape s, Rectangle? before = null) {
             Rectangle r = s.Bounds;
@@ -1049,7 +1004,7 @@ namespace Trazo {
         /// <summary>Rectángulo con el que se alinea un elemento: su contorno sin el margen del trazo.</summary>
         private static Rectangle AlignBox(Shape s) => s switch {
             BoxShape box => box.Rect,
-            SegmentShape segment => Normalize(segment.Start, segment.End),
+            SegmentShape segment => MathUtil.Normalize(segment.Start, segment.End),
             PathArrowShape path => Rectangle.FromLTRB(path.Points.Min(p => p.X), path.Points.Min(p => p.Y),
                                                       path.Points.Max(p => p.X), path.Points.Max(p => p.Y)),
             _ => s.Bounds,
@@ -1256,33 +1211,10 @@ namespace Trazo {
 
         // ───────────────────────────── Vista previa del OCR ─────────────────────────────
 
-        private int CardPadding => (int)(14 * scale);
-        private int CardTitleHeight => (int)(24 * scale);
-        private int CardFootHeight => (int)(20 * scale);
-        private const TextFormatFlags BodyFlags =
-            TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix;
-
         private void ShowOcrPreview(string text) {
             HideOcrPreview();
             ocrText = text;
-
-            int width = (int)(380 * scale);
-            int pad = CardPadding;
-            int maxBody = (int)(260 * scale);
-            Size body = TextRenderer.MeasureText(text, cardBodyFont, new Size(width - pad * 2, int.MaxValue), BodyFlags);
-            int height = pad + CardTitleHeight + Math.Min(body.Height, maxBody) + CardFootHeight + pad;
-
-            // Al lado de la selección si cabe; si no, dentro de ella en la esquina superior derecha
-            Rectangle area = ScreenAreaFor(selection);
-            int gap = (int)(10 * scale);
-            int x, y = selection.Top;
-            if (selection.Right + gap + width <= area.Right) x = selection.Right + gap;
-            else if (selection.Left - gap - width >= area.Left) x = selection.Left - gap - width;
-            else { x = selection.Right - width - gap; y = selection.Top + gap; }
-
-            x = Math.Max(area.Left, Math.Min(x, area.Right - width));
-            y = Math.Max(area.Top, Math.Min(y, area.Bottom - height));
-            ocrRect = new Rectangle(x, y, width, height);
+            ocrRect = cards.TopCenter(ScreenAreaFor(selection), cards.MeasureOcr(text));
             Invalidate(ocrRect);
         }
 
@@ -1292,28 +1224,7 @@ namespace Trazo {
             Invalidate(ocrRect);
         }
 
-        private void DrawOcrPreview(Graphics g) {
-            int pad = CardPadding;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            using (var path = RoundedRect(ocrRect, (int)(10 * scale))) {
-                using var back = new SolidBrush(CardBack);
-                g.FillPath(back, path);
-                using var border = new Pen(Color.FromArgb(90, Accent), 1);
-                g.DrawPath(border, path);
-            }
-
-            var title = new Rectangle(ocrRect.X + pad, ocrRect.Y + pad, ocrRect.Width - pad * 2, CardTitleHeight);
-            TextRenderer.DrawText(g, "✓  Texto copiado al portapapeles", cardTitleFont, title, Color.FromArgb(90, 200, 120),
-                TextFormatFlags.Left | TextFormatFlags.Top);
-
-            var body = Rectangle.FromLTRB(title.Left, title.Bottom, title.Right, ocrRect.Bottom - pad - CardFootHeight);
-            TextRenderer.DrawText(g, ocrText, cardBodyFont, body, Color.White, BodyFlags);
-
-            int lines = ocrText!.Split('\n').Length;
-            var foot = new Rectangle(title.Left, body.Bottom + (int)(4 * scale), title.Width, CardFootHeight);
-            TextRenderer.DrawText(g, $"{lines} {(lines == 1 ? "línea" : "líneas")} · {ocrText.Length} caracteres · Esc para ocultar",
-                cardFootFont, foot, Color.FromArgb(150, 150, 150), TextFormatFlags.Left | TextFormatFlags.Bottom);
-        }
+        private void DrawOcrPreview(Graphics g) => cards.DrawOcr(g, ocrRect, ocrText!, "Esc para ocultar", CardBack);
 
         // ───────────────────────────── Ratón ─────────────────────────────
 
@@ -1326,8 +1237,13 @@ namespace Trazo {
             }
 
             if (phase == Phase.Selecting) {
-                if (e.Button == MouseButtons.Left) selectStart = e.Location;
-                else if (e.Button == MouseButtons.Right) Close();
+                // Con el botón derecho la zona se pasa directamente al lector de texto;
+                // un clic derecho sin arrastrar sigue cerrando la captura (al soltarlo)
+                // Mientras se lee el texto de un arrastre con el botón derecho no se empieza otra zona
+                if (!ocrRunning && selectStart == null && e.Button is MouseButtons.Left or MouseButtons.Right) {
+                    selectStart = e.Location;
+                    selectButton = e.Button;
+                }
                 return;
             }
 
@@ -1374,6 +1290,9 @@ namespace Trazo {
                 return;
             }
             Deselect();
+
+            // Solo se añaden elementos dentro de la zona elegida
+            if (!selection.Contains(e.Location)) return;
 
             // El ajuste a las guías solo se aplica al mover el elemento ya dibujado, no al dibujarlo
             Point start = e.Location;
@@ -1558,7 +1477,7 @@ namespace Trazo {
             if (phase == Phase.Selecting) {
                 if (selectStart is Point start) {
                     Rectangle old = selection;
-                    selection = Rectangle.Intersect(Normalize(start, e.Location), ClientRectangle);
+                    selection = Rectangle.Intersect(MathUtil.Normalize(start, e.Location), ClientRectangle);
                     InvalidateSelectionChange(old, selection);
                 }
                 return;
@@ -1586,15 +1505,17 @@ namespace Trazo {
             if (drawing != null) {
                 Rectangle before = drawing.Bounds;
                 bool shift = (ModifierKeys & Keys.Shift) != 0;
+                // Lo que se dibuja no sale de la zona elegida
+                Point p = ClampToSelection(e.Location);
                 switch (drawing) {
                     case BoxShape box:
-                        box.End = shift ? ConstrainSquare(box.Start, e.Location) : e.Location;
+                        box.End = shift ? ConstrainSquareInside(box.Start, p) : p;
                         break;
                     case SegmentShape segment:
-                        segment.End = shift ? ConstrainAxis(segment.Start, e.Location) : e.Location;
+                        segment.End = shift ? ConstrainAxis(segment.Start, p) : p;
                         break;
                     case PathArrowShape path:
-                        path.AddPoint(e.Location, axisOnly: shift);
+                        path.AddPoint(p, axisOnly: shift);
                         break;
                 }
                 InvalidateShape(drawing, before);
@@ -1620,8 +1541,16 @@ namespace Trazo {
             base.OnMouseUp(e);
 
             if (phase == Phase.Selecting) {
-                if (selectStart == null || e.Button != MouseButtons.Left) return;
+                if (selectStart == null || e.Button != selectButton) return;
                 selectStart = null;
+                if (selectButton == MouseButtons.Right) {
+                    if (selection.Width < 4 || selection.Height < 4) {
+                        Close();
+                        return;
+                    }
+                    RecognizeAndClose();
+                    return;
+                }
                 if (selection.Width < 4 || selection.Height < 4) {
                     // Un clic sin arrastrar selecciona el monitor entero
                     Rectangle monitor = System.Windows.Forms.Screen.FromPoint(PointToScreen(e.Location)).Bounds;
@@ -1654,7 +1583,7 @@ namespace Trazo {
                 Rectangle b = drawing.Bounds;
                 bool tooSmall = drawing switch {
                     BoxShape box => box.Rect.Width < 3 || box.Rect.Height < 3,
-                    SegmentShape segment => Distance(segment.Start, segment.End) < 5,
+                    SegmentShape segment => MathUtil.Distance(segment.Start, segment.End) < 5,
                     PathArrowShape path => path.TooSmall,
                     _ => false,
                 };
@@ -1950,7 +1879,7 @@ namespace Trazo {
             // Una figura que se ha quedado sin tamaño se deshace, igual que al dibujarla
             bool tooSmall = selected switch {
                 BoxShape box => box.Rect.Width < 3 || box.Rect.Height < 3,
-                SegmentShape segment => Distance(segment.Start, segment.End) < 5,
+                SegmentShape segment => MathUtil.Distance(segment.Start, segment.End) < 5,
                 PathArrowShape path => path.TooSmall,
                 _ => false,
             };
@@ -2031,7 +1960,7 @@ namespace Trazo {
                         if (start.Y > end.Y) start.Y = Math.Max(start.Y + dy, end.Y);
                         else end.Y = Math.Max(end.Y + dy, start.Y);
                     }
-                    if ((start == segment.Start && end == segment.End) || Distance(start, end) < 5) return;
+                    if ((start == segment.Start && end == segment.End) || MathUtil.Distance(start, end) < 5) return;
                     break;
                 }
                 default:
@@ -2045,7 +1974,7 @@ namespace Trazo {
                 case SegmentShape segment: segment.Start = start; segment.End = end; break;
             }
             InvalidateShape(selected, before);
-            Rectangle area = Normalize(start, end);
+            Rectangle area = MathUtil.Normalize(start, end);
             ShowStatus($"Tamaño: {area.Width} × {area.Height} px");
         }
 
@@ -2066,19 +1995,23 @@ namespace Trazo {
             return null;
         }
 
-        private static Rectangle Normalize(Point a, Point b) =>
-            Rectangle.FromLTRB(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Max(a.X, b.X), Math.Max(a.Y, b.Y));
+        /// <summary>El punto más cercano dentro de la zona elegida.</summary>
+        private Point ClampToSelection(Point p) => new(
+            Math.Max(selection.Left, Math.Min(p.X, selection.Right - 1)),
+            Math.Max(selection.Top, Math.Min(p.Y, selection.Bottom - 1)));
 
-        private static Point ConstrainSquare(Point start, Point p) {
+        /// <summary>Cuadrado (o círculo) desde el punto inicial, encogido para no salir de la zona elegida.</summary>
+        private Point ConstrainSquareInside(Point start, Point p) {
             int dx = p.X - start.X, dy = p.Y - start.Y;
             int d = Math.Max(Math.Abs(dx), Math.Abs(dy));
+            int roomX = dx < 0 ? start.X - selection.Left : selection.Right - 1 - start.X;
+            int roomY = dy < 0 ? start.Y - selection.Top : selection.Bottom - 1 - start.Y;
+            d = Math.Min(d, Math.Min(roomX, roomY));
             return new Point(start.X + (dx < 0 ? -d : d), start.Y + (dy < 0 ? -d : d));
         }
 
         private static Point ConstrainAxis(Point start, Point p) =>
             Math.Abs(p.X - start.X) >= Math.Abs(p.Y - start.Y) ? new Point(p.X, start.Y) : new Point(start.X, p.Y);
-
-        private static double Distance(Point a, Point b) => Math.Sqrt(Math.Pow(a.X - b.X, 2) + Math.Pow(a.Y - b.Y, 2));
 
         // ───────────────────────────── Estilo y deshacer ─────────────────────────────
 
@@ -2253,10 +2186,17 @@ namespace Trazo {
         // ───────────────────────────── Acciones ─────────────────────────────
 
         private void PickColor(Point p) {
+            Color c = CopyColor(p, out string message);
+            ShowStatus(message, c);
+        }
+
+        /// <summary>Copia el código del píxel y devuelve su color y el aviso que lo cuenta.</summary>
+        private Color CopyColor(Point p, out string message) {
             Color c = PixelAt(p);
-            string hex = $"#{c.R:X2}{c.G:X2}{c.B:X2}";
+            string hex = Ui.ToHex(c);
             Clipboard.SetText(hex);
-            ShowStatus($"Color {hex} (RGB {c.R}, {c.G}, {c.B}) copiado al portapapeles", c);
+            message = $"Color {hex} (RGB {c.R}, {c.G}, {c.B}) copiado al portapapeles";
+            return c;
         }
 
         private Bitmap RenderSelection(bool withShapes) {
@@ -2287,13 +2227,13 @@ namespace Trazo {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 // Con medio píxel de desplazamiento el contorno coincide con los bordes de la imagen
                 g.PixelOffsetMode = PixelOffsetMode.Half;
-                using (GraphicsPath shape = RoundedRect(new RectangleF(0, 0, w, h), radius)) {
+                using (GraphicsPath shape = Ui.RoundedRect(new RectangleF(0, 0, w, h), radius)) {
                     g.FillPath(texture, shape);
                 }
                 if (border > 0) {
                     // Por dentro de la imagen, siguiendo la curva de las esquinas
                     float inset = border / 2;
-                    using GraphicsPath line = RoundedRect(new RectangleF(inset, inset, w - border, h - border), Math.Max(0, radius - inset));
+                    using GraphicsPath line = Ui.RoundedRect(new RectangleF(inset, inset, w - border, h - border), Math.Max(0, radius - inset));
                     using var pen = new Pen(settings.BorderColorValue, border);
                     g.DrawPath(pen, line);
                 }
@@ -2358,35 +2298,64 @@ namespace Trazo {
             Close();
         }
 
-        private async void RecognizeText() {
-            if (phase != Phase.Editing || ocrRunning) return;
-            CommitText();
-            HideOcrPreview();
+        private const string NoTextFound = "No se ha encontrado texto en la zona seleccionada";
+
+        /// <summary>
+        /// Lee el texto de la zona (sin las anotaciones, que confundirían al OCR) y lo copia si hay alguno.
+        /// Devuelve null si ha fallado (ya se ha avisado del error) y una cadena vacía si no hay texto.
+        /// </summary>
+        private async Task<string?> ReadSelectionText() {
             ocrRunning = true;
             ShowStatus("Reconociendo texto…");
             try {
-                // Se usa la imagen sin anotaciones para no confundir al OCR
                 string text;
                 using (Bitmap bmp = RenderSelection(withShapes: false)) {
                     text = await OcrService.RecognizeAsync(bmp);
                 }
-                if (IsDisposed) return;
-
-                if (string.IsNullOrWhiteSpace(text)) {
-                    ShowStatus("No se ha encontrado texto en la zona seleccionada");
-                    return;
-                }
-                Clipboard.SetText(text);
+                if (IsDisposed) return null;
                 ShowStatus(null);
-                ShowOcrPreview(text);
+                if (string.IsNullOrWhiteSpace(text)) return "";
+                Clipboard.SetText(text);
+                return text;
             } catch (Exception ex) {
                 if (!IsDisposed) {
                     ShowStatus(null);
                     MessageBox.Show(this, ex.Message, "Error de OCR", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
+                return null;
             } finally {
                 ocrRunning = false;
             }
+        }
+
+        /// <summary>
+        /// Arrastre con el botón derecho: lee el texto sin abrir el editor y cierra la captura, dejando el texto
+        /// en un aviso aparte. Si no hay texto no se cierra: se vuelve a elegir zona.
+        /// </summary>
+        private async void RecognizeAndClose() {
+            Cursor = Cursors.AppStarting;
+            Point near = PointToScreen(new Point(selection.X + selection.Width / 2, selection.Y + selection.Height / 2));
+            string? text = await ReadSelectionText();
+            if (IsDisposed) return;
+            if (text == "") {
+                ShowStatus(NoTextFound);
+                Rectangle old = selection;
+                selection = Rectangle.Empty;
+                InvalidateSelectionChange(old, selection);
+                Cursor = ToolCursor;
+                return;
+            }
+            if (text != null) Toast.ShowOcr(text, near);
+            Close();
+        }
+
+        private async void RecognizeText() {
+            if (phase != Phase.Editing || ocrRunning) return;
+            CommitText();
+            HideOcrPreview();
+            string? text = await ReadSelectionText();
+            if (text == "") ShowStatus(NoTextFound);
+            else if (text != null) ShowOcrPreview(text);
         }
 
         // ───────────────────────────── Teclado ─────────────────────────────
@@ -2411,10 +2380,8 @@ namespace Trazo {
             // y cierra, dejando el aviso en una ventana aparte
             if (phase == Phase.Selecting && keyData == (Keys.Control | Keys.C)) {
                 if (!ClientRectangle.Contains(mouse)) return true;
-                Color c = PixelAt(mouse);
-                string hex = $"#{c.R:X2}{c.G:X2}{c.B:X2}";
-                Clipboard.SetText(hex);
-                ColorToast.Show($"Color {hex} (RGB {c.R}, {c.G}, {c.B}) copiado al portapapeles", c, PointToScreen(mouse));
+                Color c = CopyColor(mouse, out string message);
+                Toast.ShowMessage(message, PointToScreen(mouse), c);
                 Close();
                 return true;
             }

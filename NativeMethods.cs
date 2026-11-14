@@ -163,11 +163,17 @@ namespace Trazo {
         }
     }
 
-    /// <summary>Funciones que .NET Framework 4.8 no trae (Math.Clamp llegó en .NET Core).</summary>
+    /// <summary>Cálculos sencillos compartidos (Clamp porque .NET Framework 4.8 no trae Math.Clamp).</summary>
     internal static class MathUtil {
 
         public static int Clamp(int value, int min, int max) => value < min ? min : value > max ? max : value;
 
         public static float Clamp(float value, float min, float max) => value < min ? min : value > max ? max : value;
+
+        /// <summary>Rectángulo entre dos esquinas opuestas cualesquiera.</summary>
+        public static Rectangle Normalize(Point a, Point b) =>
+            Rectangle.FromLTRB(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Max(a.X, b.X), Math.Max(a.Y, b.Y));
+
+        public static double Distance(Point a, Point b) => Math.Sqrt((double)(a.X - b.X) * (a.X - b.X) + (double)(a.Y - b.Y) * (a.Y - b.Y));
     }
 }

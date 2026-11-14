@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
@@ -32,7 +31,7 @@ namespace Trazo {
             } catch (Exception ex) {
                 if (await TrazoMessage.ShowAsync("No se ha podido comprobar si hay actualizaciones",
                         $"{ex.Message}\n\nPuedes mirarlo en la página de versiones de Trazo.", "Abrir la página", "Cerrar")) {
-                    OpenUrl(ReleasesPage);
+                    Ui.OpenUrl(ReleasesPage);
                 }
                 return false;
             }
@@ -65,7 +64,7 @@ namespace Trazo {
             if (installer == null) {
                 if (await TrazoMessage.ShowAsync(title, message, "Abrir la página", "Ahora no", fullNotes,
                         "¿Quieres abrir la página de la versión para descargarla?")) {
-                    OpenUrl(releasePage);
+                    Ui.OpenUrl(releasePage);
                 }
                 return false;
             }
@@ -173,14 +172,6 @@ namespace Trazo {
         }
 
         private static Version Normalize(Version v) => new(v.Major, Math.Max(0, v.Minor), Math.Max(0, v.Build));
-
-        private static void OpenUrl(string url) {
-            try {
-                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            } catch (Exception) {
-                // Sin navegador predeterminado: no hay nada más que hacer
-            }
-        }
 
         [DataContract]
         private sealed class Release {

@@ -25,13 +25,38 @@ namespace Trazo {
 
         protected Pen CreatePen() => new(Stroke, Width) { LineJoin = LineJoin.Round, StartCap = LineCap.Round, EndCap = LineCap.Round };
 
-        protected static Rectangle Normalize(Point a, Point b) =>
-            Rectangle.FromLTRB(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Max(a.X, b.X), Math.Max(a.Y, b.Y));
-
         protected Rectangle Padded(Rectangle r) {
             int pad = (int)Math.Ceiling(Width) + 2;
             r.Inflate(pad, pad);
             return r;
+        }
+
+        protected float HeadLength => Math.Max(12, Width * 4);
+
+        /// <summary>
+        /// Triángulo de la punta de una flecha que llega a <paramref name="tip"/> desde <paramref name="from"/>;
+        /// null si los dos puntos coinciden. <paramref name="length"/> es lo que mide la punta: el trazo debe
+        /// acabar ahí para que no asome por delante.
+        /// </summary>
+        protected PointF[]? ArrowHead(PointF from, PointF tip, out float length) {
+            float dx = tip.X - from.X, dy = tip.Y - from.Y;
+            float len = (float)Math.Sqrt(dx * dx + dy * dy);
+            length = Math.Min(HeadLength, len);
+            if (len < 1) return null;
+
+            float ux = dx / len, uy = dy / len;
+            float halfWidth = length * 0.55f;
+            var baseCenter = new PointF(tip.X - ux * length, tip.Y - uy * length);
+            return new[] {
+                tip,
+                new PointF(baseCenter.X - uy * halfWidth, baseCenter.Y + ux * halfWidth),
+                new PointF(baseCenter.X + uy * halfWidth, baseCenter.Y - ux * halfWidth),
+            };
+        }
+
+        protected void FillArrowHead(Graphics g, PointF[] head) {
+            using var brush = new SolidBrush(Stroke);
+            g.FillPolygon(brush, head);
         }
     }
 
@@ -41,7 +66,7 @@ namespace Trazo {
         public Point Start { get; set; }
         public Point End { get; set; }
 
-        public Rectangle Rect => Normalize(Start, End);
+        public Rectangle Rect => MathUtil.Normalize(Start, End);
         public override Rectangle Bounds => Padded(Rect);
 
         public override void Offset(int dx, int dy) {
@@ -89,7 +114,7 @@ namespace Trazo {
         public Point Start { get; set; }
         public Point End { get; set; }
 
-        public override Rectangle Bounds => Padded(Normalize(Start, End));
+        public override Rectangle Bounds => Padded(MathUtil.Normalize(Start, End));
 
         public override void Offset(int dx, int dy) {
             Start = new Point(Start.X + dx, Start.Y + dy);
@@ -114,11 +139,9 @@ namespace Trazo {
 
     internal sealed class ArrowShape : SegmentShape {
 
-        private float HeadLength => Math.Max(12, Width * 4);
-
         public override Rectangle Bounds {
             get {
-                Rectangle r = Normalize(Start, End);
+                Rectangle r = MathUtil.Normalize(Start, End);
                 int pad = (int)Math.Ceiling(HeadLength);
                 r.Inflate(pad, pad);
                 return r;
@@ -126,27 +149,14 @@ namespace Trazo {
         }
 
         public override void Draw(Graphics g) {
-            float dx = End.X - Start.X, dy = End.Y - Start.Y;
-            float len = (float)Math.Sqrt(dx * dx + dy * dy);
-            if (len < 1) return;
-
-            float ux = dx / len, uy = dy / len;
-            float head = Math.Min(HeadLength, len);
-            float halfWidth = head * 0.55f;
-
-            // La línea termina en la base de la punta para que no asome por delante
-            var baseCenter = new PointF(End.X - ux * head, End.Y - uy * head);
+            PointF[]? head = ArrowHead(Start, End, out _);
+            if (head == null) return;
+            // Hasta el centro de la base de la punta
+            var baseCenter = new PointF((head[1].X + head[2].X) / 2, (head[1].Y + head[2].Y) / 2);
             using (var pen = CreatePen()) {
                 g.DrawLine(pen, Start, baseCenter);
             }
-
-            PointF[] tip = {
-                End,
-                new(baseCenter.X - uy * halfWidth, baseCenter.Y + ux * halfWidth),
-                new(baseCenter.X + uy * halfWidth, baseCenter.Y - ux * halfWidth),
-            };
-            using var brush = new SolidBrush(Stroke);
-            g.FillPolygon(brush, tip);
+            FillArrowHead(g, head);
         }
     }
 
@@ -168,7 +178,6 @@ namespace Trazo {
             Points = new[] { start, start };
         }
 
-        private float HeadLength => Math.Max(12, Width * 4);
         private float CornerRadius => 14 + Width * 3;
 
         public void AddPoint(Point p, bool axisOnly) {
@@ -228,7 +237,7 @@ namespace Trazo {
         public bool TooSmall {
             get {
                 double length = 0;
-                for (int i = 1; i < Points.Length; i++) length += PathRouter.Distance(Points[i - 1], Points[i]);
+                for (int i = 1; i < Points.Length; i++) length += MathUtil.Distance(Points[i - 1], Points[i]);
                 return length < 8;
             }
         }
@@ -255,30 +264,14 @@ namespace Trazo {
         }
 
         public override void Draw(Graphics g) {
-            Point end = Points[Points.Length - 1], before = Points[Points.Length - 2];
-            float dx = end.X - before.X, dy = end.Y - before.Y;
-            float len = (float)Math.Sqrt(dx * dx + dy * dy);
-            if (len < 1) return;
-
-            float ux = dx / len, uy = dy / len;
-            float head = Math.Min(HeadLength, len);
-            float halfWidth = head * 0.55f;
-
-            // El recorrido termina en la base de la punta para que no asome por delante
-            using (GraphicsPath path = BuildPath(head))
+            PointF[]? head = ArrowHead(Points[Points.Length - 2], Points[Points.Length - 1], out float length);
+            if (head == null) return;
+            using (GraphicsPath path = BuildPath(length))
             using (Pen pen = CreatePen()) {
                 if (!Rounded) pen.LineJoin = LineJoin.Miter;
                 g.DrawPath(pen, path);
             }
-
-            var baseCenter = new PointF(end.X - ux * head, end.Y - uy * head);
-            PointF[] tip = {
-                end,
-                new(baseCenter.X - uy * halfWidth, baseCenter.Y + ux * halfWidth),
-                new(baseCenter.X + uy * halfWidth, baseCenter.Y - ux * halfWidth),
-            };
-            using var brush = new SolidBrush(Stroke);
-            g.FillPolygon(brush, tip);
+            FillArrowHead(g, head);
         }
 
         /// <summary>Recorrido con las esquinas redondeadas si toca, recortado <paramref name="trimEnd"/> px antes de la punta.</summary>
@@ -345,20 +338,18 @@ namespace Trazo {
 
         private enum Dir { H, V, Diagonal }
 
-        public static double Distance(Point a, Point b) => Math.Sqrt((double)(a.X - b.X) * (a.X - b.X) + (double)(a.Y - b.Y) * (a.Y - b.Y));
-
         /// <param name="axisOnly">Todos los tramos horizontales o verticales, sin diagonales.</param>
         public static Point[] Route(IReadOnlyList<Point> raw, bool axisOnly) {
             Point start = raw[0], end = raw[raw.Count - 1];
             var pts = new List<Point> { start };
             foreach (Point p in raw.Skip(1)) {
-                if (Distance(p, pts[pts.Count - 1]) >= 2) pts.Add(p);
+                if (MathUtil.Distance(p, pts[pts.Count - 1]) >= 2) pts.Add(p);
             }
             if (pts[pts.Count - 1] != end) pts.Add(end);
             if (pts.Count < 2) return new[] { start, end };
 
             // La tolerancia crece con el tamaño del trazo: un temblor en un trazo grande no es una esquina
-            double diag = Distance(new Point(pts.Min(p => p.X), pts.Min(p => p.Y)), new Point(pts.Max(p => p.X), pts.Max(p => p.Y)));
+            double diag = MathUtil.Distance(new Point(pts.Min(p => p.X), pts.Min(p => p.Y)), new Point(pts.Max(p => p.X), pts.Max(p => p.Y)));
             double eps = Math.Max(6, Math.Min(28, diag * 0.06));
 
             List<Point> v = Simplify(pts, eps);
@@ -372,7 +363,7 @@ namespace Trazo {
             if (dirs.Count > 1 && dirs.Contains(Dir.Diagonal)) {
                 double total = 0, longestDiagonal = 0;
                 for (int k = 0; k < dirs.Count; k++) {
-                    double length = Distance(v[k], v[k + 1]);
+                    double length = MathUtil.Distance(v[k], v[k + 1]);
                     total += length;
                     if (dirs[k] == Dir.Diagonal) longestDiagonal = Math.Max(longestDiagonal, length);
                 }
@@ -456,7 +447,7 @@ namespace Trazo {
         private static double DistanceToSegment(Point p, Point a, Point b) {
             double dx = b.X - a.X, dy = b.Y - a.Y;
             double len2 = dx * dx + dy * dy;
-            if (len2 == 0) return Distance(p, a);
+            if (len2 == 0) return MathUtil.Distance(p, a);
             double t = Math.Max(0, Math.Min(1, ((p.X - a.X) * dx + (p.Y - a.Y) * dy) / len2));
             double px = a.X + t * dx - p.X, py = a.Y + t * dy - p.Y;
             return Math.Sqrt(px * px + py * py);
@@ -468,7 +459,7 @@ namespace Trazo {
             while (changed && v.Count > 2) {
                 changed = false;
                 for (int i = 0; i < v.Count - 1 && v.Count > 2; i++) {
-                    if (Distance(v[i], v[i + 1]) >= minLength) continue;
+                    if (MathUtil.Distance(v[i], v[i + 1]) >= minLength) continue;
                     if (i == 0) v.RemoveAt(1);
                     else if (i + 1 == v.Count - 1) v.RemoveAt(i);
                     else {
@@ -506,8 +497,8 @@ namespace Trazo {
             }
             for (int i = 1; i < dirs.Count - 1; i++) {
                 if (dirs[i] != Dir.Diagonal || dirs[i - 1] == Dir.Diagonal || dirs[i + 1] == Dir.Diagonal || dirs[i - 1] == dirs[i + 1]) continue;
-                double length = Distance(v[i], v[i + 1]);
-                bool shorterThanBoth = length < Distance(v[i - 1], v[i]) && length < Distance(v[i + 1], v[i + 2]);
+                double length = MathUtil.Distance(v[i], v[i + 1]);
+                bool shorterThanBoth = length < MathUtil.Distance(v[i - 1], v[i]) && length < MathUtil.Distance(v[i + 1], v[i + 2]);
                 if (length >= eps * 3 && !shorterThanBoth) continue;
                 v[i] = new Point((v[i].X + v[i + 1].X) / 2, (v[i].Y + v[i + 1].Y) / 2);
                 v.RemoveAt(i + 1);

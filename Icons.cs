@@ -10,10 +10,8 @@ namespace Trazo {
     /// </summary>
     internal static class Icons {
 
-        /// <summary>Para la barra oscura translúcida.</summary>
+        /// <summary>Iconos y texto claros sobre los fondos oscuros de Trazo.</summary>
         public static readonly Color LightInk = Color.FromArgb(240, 240, 240);
-        /// <summary>Para los menús desplegables (fondo claro).</summary>
-        public static readonly Color DarkInk = Color.FromArgb(45, 45, 45);
 
         /// <summary>Logo de Trazo (Trazo.ico embebido) en el tamaño más cercano al pedido.</summary>
         public static Icon AppIcon(int size) => LoadIcon("Trazo.ico", size);

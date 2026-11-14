@@ -40,7 +40,7 @@ namespace Trazo {
                 Font = new Font("Segoe UI", 9.5f),
             };
             menu.MinimumSize = new Size(Scaled(menu, 170), 0);
-            menu.HandleCreated += (_, _) => StyleWindow(menu.Handle);
+            menu.HandleCreated += (_, _) => Ui.StylePopup(menu.Handle);
             menu.Disposed += (_, _) => menu.Font.Dispose();
             return menu;
         }
@@ -78,17 +78,35 @@ namespace Trazo {
             menu.Items.Add(new ToolStripSeparator { Margin = new Padding(0, y, 0, y) });
         }
 
-        private static void StyleWindow(IntPtr handle) {
-            // Sin efecto en Windows 10: el menú queda rectangular
-            int corners = NativeMethods.DWMWCP_ROUND;
-            NativeMethods.DwmSetWindowAttribute(handle, NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE, ref corners, sizeof(int));
-            int border = ColorTranslator.ToWin32(SettingsForm.Edge);
-            NativeMethods.DwmSetWindowAttribute(handle, NativeMethods.DWMWA_BORDER_COLOR, ref border, sizeof(int));
+        /// <summary>
+        /// Da el aspecto de Trazo a un desplegable que ya existe (los de la barra de la captura): fondo oscuro,
+        /// texto e iconos claros, filas algo más altas y resaltado de lado a lado. Conserva iconos y marcas.
+        /// </summary>
+        public static void Style(ToolStripDropDownItem button) {
+            // El desplegable que WinForms crea solo usa siempre el renderizador de la barra: se cambia por uno
+            // propio y se le pasan los elementos
+            var dropDown = new ToolStripDropDownMenu {
+                Renderer = new DropDownRenderer(),
+                Font = button.Font,
+                ImageScalingSize = button.Owner?.ImageScalingSize ?? new Size(16, 16),
+            };
+            ToolStripItem[] items = button.DropDownItems.Cast<ToolStripItem>().ToArray();
+            dropDown.Items.AddRange(items);
+            button.DropDown = dropDown;
+            dropDown.BackColor = SettingsForm.Back;
+            dropDown.ForeColor = SettingsForm.TextColor;
+            int y = Scaled(dropDown, 3);
+            foreach (ToolStripItem item in dropDown.Items) {
+                if (item is ToolStripMenuItem) item.Padding = new Padding(item.Padding.Left, y, Scaled(dropDown, 10), y);
+            }
+            if (dropDown.IsHandleCreated) Ui.StylePopup(dropDown.Handle);
+            else dropDown.HandleCreated += (_, _) => Ui.StylePopup(dropDown.Handle);
         }
 
-        private sealed class Renderer : ToolStripProfessionalRenderer {
+        /// <summary>Lo común a todos los menús: fondo oscuro, resaltado y separadores de borde a borde.</summary>
+        private abstract class BaseRenderer : ToolStripProfessionalRenderer {
 
-            public Renderer() : base(new Colors()) {
+            protected BaseRenderer() : base(new Colors()) {
                 RoundedEdges = false;
             }
 
@@ -97,12 +115,8 @@ namespace Trazo {
                 e.Graphics.FillRectangle(back, e.AffectedBounds);
             }
 
-            protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e) {
-                // En Windows 11 el borde lo pone el sistema (redondeado); en Windows 10, uno fino
-                if (Environment.OSVersion.Version.Build >= 22000) return;
-                using var pen = new Pen(SettingsForm.Edge);
-                e.Graphics.DrawRectangle(pen, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
-            }
+            protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e) =>
+                Ui.DrawWindows10Border(e.Graphics, e.ToolStrip.Size);
 
             protected override void OnRenderImageMargin(ToolStripRenderEventArgs e) {
                 // Sin la franja gris de los iconos: todo el menú del mismo color
@@ -110,26 +124,8 @@ namespace Trazo {
 
             protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e) {
                 if (!e.Item.Selected || !e.Item.Enabled || e.Item.Owner == null) return;
-                // De borde a borde del menú, como los separadores
                 using var brush = new SolidBrush(SettingsForm.SurfaceHover);
                 e.Graphics.FillRectangle(brush, RowBounds(e.Item));
-            }
-
-            protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e) {
-                if (e.Item.Owner == null) { base.OnRenderItemText(e); return; }
-                // Siempre a la misma distancia del borde, sea cual sea el margen que calcule WinForms
-                Rectangle row = RowBounds(e.Item);
-                int inset = Scaled(e.Item.Owner, TextInset);
-                var r = Rectangle.FromLTRB(row.X + inset, 0, row.Right - inset, row.Height);
-                TextRenderer.DrawText(e.Graphics, e.Text, e.TextFont, r, e.Item.Enabled ? SettingsForm.TextColor : SettingsForm.SubText,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
-
-                // Imagen al final de la fila, alineada con el margen derecho
-                if (e.Item.Tag is Image image) {
-                    int size = TrailingSize(e.Item.Owner);
-                    e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                    e.Graphics.DrawImage(image, new Rectangle(row.Right - inset - size, (row.Height - size) / 2, size, size));
-                }
             }
 
             protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e) {
@@ -137,6 +133,75 @@ namespace Trazo {
                 int y = e.Item.Height / 2;
                 using var pen = new Pen(SettingsForm.Edge);
                 e.Graphics.DrawLine(pen, row.Left, y, row.Right, y);
+            }
+
+            protected static Color TextColor(ToolStripItem? item) => item?.Enabled == false ? SettingsForm.SubText : SettingsForm.TextColor;
+        }
+
+        /// <summary>Menú de solo texto (el de la bandeja), con una imagen opcional al final de la fila.</summary>
+        private sealed class Renderer : BaseRenderer {
+
+            protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e) {
+                if (e.Item.Owner == null) { base.OnRenderItemText(e); return; }
+                // Siempre a la misma distancia del borde, sea cual sea el margen que calcule WinForms
+                Rectangle row = RowBounds(e.Item);
+                int inset = Scaled(e.Item.Owner, TextInset);
+                var r = Rectangle.FromLTRB(row.X + inset, 0, row.Right - inset, row.Height);
+                TextRenderer.DrawText(e.Graphics, e.Text, e.TextFont, r, TextColor(e.Item),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
+
+                if (e.Item.Tag is Image image) {
+                    int size = TrailingSize(e.Item.Owner);
+                    e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    e.Graphics.DrawImage(image, new Rectangle(row.Right - inset - size, (row.Height - size) / 2, size, size));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Menú con iconos, marcas y submenús (los de la barra de la captura): lo elegido se señala con un fondo
+        /// gris claro detrás del icono o, si no tiene, con una marca dibujada en claro.
+        /// </summary>
+        private sealed class DropDownRenderer : BaseRenderer {
+
+            protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e) {
+                e.TextColor = TextColor(e.Item);
+                base.OnRenderItemText(e);
+            }
+
+            protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e) {
+                e.ArrowColor = TextColor(e.Item);
+                base.OnRenderArrow(e);
+            }
+
+            protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) {
+                Graphics g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                Rectangle r = e.ImageRectangle;
+                r.Inflate(2, 2);
+                float scale = (e.Item.Owner?.DeviceDpi ?? 96) / 96f;
+                using (GraphicsPath path = Ui.RoundedRect(r, (int)Math.Round(4 * scale)))
+                using (var back = new SolidBrush(SettingsForm.Accent)) {
+                    g.FillPath(back, path);
+                }
+                if (e.Item.Image is Image image) {
+                    // El icono va encima del fondo; por eso OnRenderItemImage no lo dibuja en los elementos marcados
+                    g.DrawImage(image, e.ImageRectangle);
+                    return;
+                }
+                float w = r.Width, h = r.Height;
+                var check = new[] {
+                    new PointF(r.X + w * 0.28f, r.Y + h * 0.52f),
+                    new PointF(r.X + w * 0.44f, r.Y + h * 0.68f),
+                    new PointF(r.X + w * 0.73f, r.Y + h * 0.34f),
+                };
+                using var pen = new Pen(Color.White, 1.8f * scale) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+                g.DrawLines(pen, check);
+            }
+
+            protected override void OnRenderItemImage(ToolStripItemImageRenderEventArgs e) {
+                if (e.Item is ToolStripMenuItem { Checked: true }) return;
+                base.OnRenderItemImage(e);
             }
         }
 
