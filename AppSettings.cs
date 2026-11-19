@@ -57,6 +57,12 @@ namespace Trazo {
         /// <summary>Reglas en los bordes de la zona y guías para centrar y alinear elementos (Ctrl+R en la captura).</summary>
         [DataMember] public bool ShowGuides { get; set; }
 
+        /// <summary>Botones de la barra de la captura en orden ("|" = separador); null = la barra por defecto (ver <see cref="ToolbarLayout"/>).</summary>
+        [DataMember] public List<string>? ToolbarButtons { get; set; }
+
+        /// <summary>Botones que el usuario ha quitado de la barra.</summary>
+        [DataMember] public List<string>? ToolbarHidden { get; set; }
+
         // Aspecto de la imagen copiada o guardada
 
         [DataMember] public bool RoundCorners { get; set; }
@@ -94,6 +100,8 @@ namespace Trazo {
             LastArrowTool = "";
             PathArrowRounded = false;
             ShowGuides = false;
+            ToolbarButtons = null;
+            ToolbarHidden = null;
             RoundCorners = false;
             CornerRadius = 12;
             AddBorder = false;

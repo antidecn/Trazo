@@ -27,6 +27,7 @@
 - **Redimensionar o mover la zona** después de elegirla, arrastrando sus bordes o tiradores, o el botón de mover que aparece junto a una de sus esquinas.
 - **Reglas y guías de alineación** (<kbd>Ctrl</kbd>+<kbd>R</kbd> o desde la configuración): reglas en los bordes de la zona y líneas de color que aparecen al mover o redimensionar un elemento ya dibujado cuando queda centrado o alineado con la zona u otros elementos, a los que se ajusta al pasar cerca. Con <kbd>Alt</kbd> pulsado se mueve libremente.
 - **Esquinas redondeadas y borde** opcionales en la imagen copiada o guardada (tres tamaños de cada uno y el color del borde), desde la configuración.
+- **Barra a tu gusto**: con los tres puntos del final, la barra entra en modo edición y debajo aparece otra con los botones que no están. Arrastra para ordenarlos, quitarlos o añadirlos (un clic también vale); los ocultos siguen funcionando con su atajo. También puedes añadir separadores o volver a la barra de siempre.
 - Recuerda la última herramienta y el último estilo usados, y permite cambiar el atajo e iniciar con Windows desde su configuración.
 - **Ayuda y actualizaciones** desde la configuración y el menú de la bandeja: una ventana con todos los atajos de teclado y la búsqueda de una versión nueva.
 - **Aviso de versiones nuevas** (opcional, desactivado por defecto; se elige al instalar y se cambia en la configuración): Trazo lo comprueba como mucho una vez al día, empezando 5 minutos después de arrancar, y muestra un aviso discreto. Nunca se actualiza solo: desde el aviso puedes ver la versión y decidir si instalarla.
@@ -127,6 +128,7 @@ Las imágenes del instalador (fondos, logo, botones) se regeneran solas al compi
 | `DarkMenu.cs` | Menús oscuros: el del icono de la bandeja y los desplegables de la barra de la captura |
 | `ShortcutsForm.cs` | Ventana de atajos de teclado |
 | `CaptureOverlay.cs`, `Shapes.cs` | Pantalla de captura, herramientas y formas |
+| `CaptureOverlay.Toolbar.cs`, `ToolbarLayout.cs` | Barra personalizable: modo edición con la barra de botones ocultos y los botones elegidos por el usuario |
 | `OcrService.cs` | Reconocimiento de texto con el OCR de Windows |
 | `Toast.cs` | Avisos que quedan en pantalla al cerrar la captura (color copiado, texto leído) |
 | `SettingsForm.cs`, `AppSettings.cs` | Configuración y su almacenamiento en `%AppData%\Trazo` |

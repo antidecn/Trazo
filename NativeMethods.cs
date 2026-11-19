@@ -15,6 +15,10 @@ namespace Trazo {
         [DllImport("kernel32.dll")]
         public static extern IntPtr GetCurrentProcess();
 
+        /// <summary>Espera al siguiente refresco del escritorio: marca el ritmo de las animaciones. 0 si ha esperado.</summary>
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmFlush();
+
         public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20, DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWA_BORDER_COLOR = 34, DWMWA_CAPTION_COLOR = 35;
         /// <summary>Esquinas redondeadas de Windows 11, las de las ventanas.</summary>
         public const int DWMWCP_ROUND = 2;

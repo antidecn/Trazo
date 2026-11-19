@@ -9,7 +9,7 @@ namespace Trazo {
     /// Ventana sin bordes que cubre todos los monitores con la captura congelada.
     /// Primero se selecciona una zona y después se dibuja sobre ella.
     /// </summary>
-    internal sealed class CaptureOverlay : Form {
+    internal sealed partial class CaptureOverlay : Form {
 
         private enum Phase { Selecting, Editing }
         private enum Tool { Arrow, PathArrow, Line, Rectangle, Ellipse, Text, Pixelate, Picker }
@@ -163,12 +163,15 @@ namespace Trazo {
             Text = "Trazo";
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
 
+            toolbarLayout = ToolbarLayout.Load(settings);
             toolbar = BuildToolbar();
+            ApplyToolbarLayout();
             Controls.Add(toolbar);
             // Se abre con la última herramienta de dibujo usada
             SetTool(Enum.TryParse(settings.LastTool, out Tool last) && IsDrawingTool(last) ? last : Tool.Arrow);
 
             statusTimer.Tick += (_, _) => ShowStatus(null);
+            tipTimer.Tick += (_, _) => PlaceTip();
             caretTimer.Tick += (_, _) => {
                 caretVisible = !caretVisible;
                 InvalidateEditingText();
@@ -223,25 +226,27 @@ namespace Trazo {
         protected override void Dispose(bool disposing) {
             if (disposing) {
                 statusTimer.Dispose();
+                tipTimer.Dispose();
                 caretTimer.Dispose();
                 fadeTimer.Dispose();
                 screenshot.Dispose();
                 dimmed.Dispose();
                 toolbarBackdrop?.Dispose();
+                DisposeCustomizerImages();
                 magnifierCard?.Dispose();
                 foreach (Font f in previewFonts) f.Dispose();
                 // Iconos de la barra y de sus desplegables y submenús; los desplegables propios
-                // (DarkMenu.Style) no se liberan solos con su botón
-                void DisposeItems(ToolStripItemCollection items) {
+                // (DarkMenu.Style) no se liberan solos con su botón. También los de los botones ocultos.
+                void DisposeItems(IEnumerable<ToolStripItem> items) {
                     foreach (ToolStripItem item in items) {
                         item.Image?.Dispose();
                         if (item is ToolStripDropDownItem { HasDropDownItems: true } dd) {
-                            DisposeItems(dd.DropDownItems);
+                            DisposeItems(dd.DropDownItems.Cast<ToolStripItem>());
                             if (!dd.DropDown.IsDisposed) dd.DropDown.Dispose();
                         }
                     }
                 }
-                DisposeItems(toolbar.Items);
+                DisposeItems(toolbarItems.Values.Append(customizeButton));
                 uiFont.Dispose();
                 cards.Dispose();
             }
@@ -295,10 +300,18 @@ namespace Trazo {
                 Padding = new Padding(pad + 2, pad, pad, pad),
                 Visible = false,
                 Cursor = Cursors.Default,
-                ShowItemToolTips = true,
+                // Las descripciones las pinta Trazo (CaptureOverlay.Tips.cs)
+                ShowItemToolTips = false,
             };
 
-            ToolStripButton IconButton(IconKind kind, string tip, Action onClick) {
+            // Cada botón se registra con su clave; ApplyToolbarLayout los coloca en el orden del usuario
+            T Add<T>(string key, T item) where T : ToolStripItem {
+                strip.Items.Add(item);
+                toolbarItems[key] = item;
+                return item;
+            }
+
+            ToolStripButton IconButton(string key, IconKind kind, string tip, Action onClick) {
                 var b = new ToolStripButton {
                     DisplayStyle = ToolStripItemDisplayStyle.Image,
                     Image = Icons.Create(kind, iconSize, Icons.LightInk),
@@ -308,14 +321,13 @@ namespace Trazo {
                     Margin = new Padding(1, 0, 1, 0),
                 };
                 b.Click += (_, _) => onClick();
-                strip.Items.Add(b);
-                return b;
+                return Add(key, b);
             }
 
-            void AddTool(Tool t, IconKind icon, string tip) => toolButtons[t] = IconButton(icon, tip, () => SetTool(t));
+            void AddTool(Tool t, IconKind icon, string tip) => toolButtons[t] = IconButton(t.ToString(), icon, tip, () => SetTool(t));
 
             // Botón de herramienta con desplegable: activa la herramienta y, si ya está activa, abre el desplegable
-            ToolStripSplitButton SplitTool(string tip, Action select) {
+            ToolStripSplitButton SplitTool(string key, string tip, Action select) {
                 int pad = (int)Math.Round(4 * scale);
                 var b = new ToolStripSplitButton {
                     DisplayStyle = ToolStripItemDisplayStyle.Image,
@@ -330,14 +342,13 @@ namespace Trazo {
                     if (IsActive(b)) b.ShowDropDown();
                     else select();
                 };
-                strip.Items.Add(b);
-                return b;
+                return Add(key, b);
             }
 
             AddTool(Tool.Rectangle, IconKind.Rectangle, "Rectángulo (R)\nMayús: cuadrado");
             AddTool(Tool.Ellipse, IconKind.Ellipse, "Elipse (E)\nMayús: círculo");
             // El botón vuelve a la última flecha usada; el desplegable elige entre las tres
-            arrowButton = SplitTool("Flechas\nFlecha (A) · Mayús: horizontal / vertical\n" +
+            arrowButton = SplitTool("Arrows", "Flechas\nFlecha (A) · Mayús: horizontal / vertical\n" +
                                     "Pintar flecha (F): dibuja el recorrido a mano y Trazo lo endereza\n" +
                                     "F otra vez: recto / redondeado · Mayús: sin diagonales", () => SetTool(arrowTool));
             var simple = new ToolStripMenuItem("Flecha", Icons.Create(IconKind.Arrow, iconSize, Icons.LightInk)) { Tag = ArrowMode.Simple };
@@ -353,7 +364,7 @@ namespace Trazo {
             }
             UpdateArrowButton();
             AddTool(Tool.Line, IconKind.Line, "Línea (L)\nMayús: horizontal / vertical");
-            textButton = SplitTool("Texto (T)\nIntro: aceptar · Mayús+Intro: nueva línea\nDoble clic en un texto seleccionado para editarlo\n" +
+            textButton = SplitTool("Text", "Texto (T)\nIntro: aceptar · Mayús+Intro: nueva línea\nDoble clic en un texto seleccionado para editarlo\n" +
                                    "Desplegable: fuente y tamaño", () => SetTool(Tool.Text));
             textButton.Image = Icons.Create(IconKind.Text, iconSize, Icons.LightInk);
 
@@ -377,9 +388,8 @@ namespace Trazo {
             }
             textButton.DropDownItems.Add(fontMenu);
             textButton.DropDownItems.Add(sizeMenu);
-            strip.Items.Add(new ToolStripSeparator());
 
-            ToolStripDropDownButton DropDown(string tip) {
+            ToolStripDropDownButton DropDown(string key, string tip) {
                 var b = new ToolStripDropDownButton {
                     DisplayStyle = ToolStripItemDisplayStyle.Image,
                     ToolTipText = tip,
@@ -387,8 +397,7 @@ namespace Trazo {
                     Padding = new Padding((int)Math.Round(3 * scale)),
                     Margin = new Padding(1, 0, 1, 0),
                 };
-                strip.Items.Add(b);
-                return b;
+                return Add(key, b);
             }
 
             strokeButton = new ToolStripButton {
@@ -402,9 +411,9 @@ namespace Trazo {
                 Color? c = PickWithDialog(strokeColor);
                 if (c != null) { strokeColor = c.Value; DrawingStyleChanged(s => s.Stroke = strokeColor); }
             };
-            strip.Items.Add(strokeButton);
+            Add("Stroke", strokeButton);
 
-            fillButton = DropDown("Color de relleno de rectángulos, elipses y texto");
+            fillButton = DropDown("Fill", "Color de relleno de rectángulos, elipses y texto");
             fillButton.DropDownItems.Add("Elegir color…", null, (_, _) => {
                 Color? c = PickWithDialog(fillColor ?? Color.White);
                 if (c != null) { fillColor = c.Value; DrawingStyleChanged(SetFill); }
@@ -414,7 +423,7 @@ namespace Trazo {
                 DrawingStyleChanged(SetFill);
             });
 
-            widthButton = DropDown("Grosor de líneas y bordes");
+            widthButton = DropDown("Width", "Grosor de líneas y bordes");
             foreach (float w in Widths) {
                 var item = new ToolStripMenuItem($"{w} px", Icons.Line(w, iconSize, Icons.LightInk));
                 item.Click += (_, _) => {
@@ -424,8 +433,6 @@ namespace Trazo {
                 widthButton.DropDownItems.Add(item);
             }
 
-            strip.Items.Add(new ToolStripSeparator());
-
             // Desplegables oscuros, como el menú de la bandeja (también los submenús de fuente y tamaño)
             foreach (ToolStripDropDownItem dd in new ToolStripDropDownItem[] { arrowButton, textButton, fontMenu, sizeMenu, fillButton, widthButton }) {
                 DarkMenu.Style(dd);
@@ -433,13 +440,25 @@ namespace Trazo {
 
             AddTool(Tool.Pixelate, IconKind.Pixelate, "Pixelar (P)\nOculta lo que hay debajo de la zona");
             AddTool(Tool.Picker, IconKind.Picker, "Cuentagotas (I)\nCopia el color de un píxel");
-            IconButton(IconKind.Ocr, "Leer texto (O)\nReconoce el texto de la zona y lo copia", RecognizeText);
-            strip.Items.Add(new ToolStripSeparator());
+            IconButton("Ocr", IconKind.Ocr, "Leer texto (O)\nReconoce el texto de la zona y lo copia", RecognizeText);
+            IconButton("Copy", IconKind.Copy, "Copiar imagen y cerrar (Ctrl+C / Intro)", CopyAndClose);
+            IconButton("Save", IconKind.Save, "Guardar como imagen (Ctrl+S)", SaveAndClose);
+            IconButton("Undo", IconKind.Undo, "Deshacer (Ctrl+Z)", Undo);
+            IconButton("Close", IconKind.Close, "Cerrar sin guardar (Esc)", Close);
 
-            IconButton(IconKind.Copy, "Copiar imagen y cerrar (Ctrl+C / Intro)", CopyAndClose);
-            IconButton(IconKind.Save, "Guardar como imagen (Ctrl+S)", SaveAndClose);
-            IconButton(IconKind.Undo, "Deshacer (Ctrl+Z)", Undo);
-            IconButton(IconKind.Close, "Cerrar sin guardar (Esc)", Close);
+            // Tres puntos estrechos y sin escalar, siempre al final: ponen la barra en modo edición
+            int dotsPad = (int)Math.Round(4 * scale), dotsSide = (int)Math.Round(2 * scale);
+            customizeButton = new ToolStripButton {
+                DisplayStyle = ToolStripItemDisplayStyle.Image,
+                Image = Icons.MoreDots(iconSize, Icons.LightInk),
+                ImageScaling = ToolStripItemImageScaling.None,
+                ToolTipText = "Personalizar la barra\nOrdenar, ocultar botones y añadir separadores",
+                AutoToolTip = false,
+                Padding = new Padding(dotsSide, dotsPad, dotsSide, dotsPad),
+                Margin = new Padding(1, 0, 0, 0),
+            };
+            customizeButton.Click += (_, _) => StartCustomizing();
+            foreach (ToolStripItem item in toolbarItems.Values.Append(customizeButton)) AttachTip(item);
 
             UpdateSwatches();
             UpdateTextControls();
@@ -610,10 +629,14 @@ namespace Trazo {
         };
 
         private void PositionToolbar() {
-            Size size = toolbar.PreferredSize;
-            toolbar.Size = size;
-            Rectangle area = ScreenAreaFor(selection);
+            toolbar.Bounds = ToolbarBounds(toolbar.PreferredSize);
+            toolbarBackdrop?.Dispose();
+            toolbarBackdrop = CreateBlurredBackdrop(toolbar.Bounds);
+        }
 
+        /// <summary>Sitio de una barra de ese tamaño: debajo de la zona y alineada a su derecha, o encima si no cabe.</summary>
+        private Rectangle ToolbarBounds(Size size) {
+            Rectangle area = ScreenAreaFor(selection);
             int x = selection.Right - size.Width;
             int y = selection.Bottom + 6;
             if (y + size.Height > area.Bottom) y = selection.Top - size.Height - 6;
@@ -621,10 +644,37 @@ namespace Trazo {
 
             x = Math.Max(area.Left, Math.Min(x, area.Right - size.Width));
             y = Math.Max(area.Top, Math.Min(y, area.Bottom - size.Height));
-            toolbar.Location = new Point(x, y);
+            return new Rectangle(new Point(x, y), size);
+        }
 
-            toolbarBackdrop?.Dispose();
-            toolbarBackdrop = CreateBlurredBackdrop(toolbar.Bounds);
+        /// <summary>
+        /// Fondo de cristal de las barras: lo de detrás difuminado, un velo oscuro translúcido (más opaco cuanto mayor
+        /// es <paramref name="veil"/>), esquinas redondeadas y un borde fino. El fondo difuminado va en <paramref name="backdropAt"/>
+        /// (por defecto, en la esquina de la barra).
+        /// </summary>
+        private void DrawGlass(Graphics g, Rectangle bounds, Bitmap? backdrop, int veil, Pen edge, Point? backdropAt = null) {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            var r = new Rectangle(bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
+            using GraphicsPath path = Ui.RoundedRect(r, (int)Math.Round(12 * scale));
+            if (backdrop != null) {
+                GraphicsState state = g.Save();
+                g.SetClip(path, CombineMode.Intersect);
+                Point at = backdropAt ?? bounds.Location;
+                g.DrawImageUnscaled(backdrop, at.X, at.Y);
+                g.Restore(state);
+            }
+            using (var brush = new SolidBrush(Color.FromArgb(veil, 18, 18, 20))) g.FillPath(brush, path);
+            g.DrawPath(edge, path);
+        }
+
+        /// <summary>La captura (oscurecida fuera de la zona) que hay en <paramref name="r"/>, pintada desde el origen de <paramref name="g"/>.</summary>
+        private void DrawScreenBehind(Graphics g, Rectangle r) {
+            g.DrawImage(dimmed, new Rectangle(0, 0, r.Width, r.Height), r, GraphicsUnit.Pixel);
+            Rectangle bright = Rectangle.Intersect(r, selection);
+            if (bright.IsEmpty) return;
+            var dest = bright;
+            dest.Offset(-r.X, -r.Y);
+            g.DrawImage(screenshot, dest, bright, GraphicsUnit.Pixel);
         }
 
         /// <summary>
@@ -633,15 +683,7 @@ namespace Trazo {
         /// </summary>
         private Bitmap CreateBlurredBackdrop(Rectangle r) {
             using var behind = new Bitmap(r.Width, r.Height, PixelFormat.Format32bppPArgb);
-            using (var g = Graphics.FromImage(behind)) {
-                g.DrawImage(dimmed, new Rectangle(0, 0, r.Width, r.Height), r, GraphicsUnit.Pixel);
-                Rectangle bright = Rectangle.Intersect(r, selection);
-                if (!bright.IsEmpty) {
-                    var dest = bright;
-                    dest.Offset(-r.X, -r.Y);
-                    g.DrawImage(screenshot, dest, bright, GraphicsUnit.Pixel);
-                }
-            }
+            using (var g = Graphics.FromImage(behind)) DrawScreenBehind(g, r);
 
             int sw = Math.Max(1, r.Width / 10), sh = Math.Max(1, r.Height / 10);
             using var small = new Bitmap(sw, sh, PixelFormat.Format32bppPArgb);
@@ -682,22 +724,9 @@ namespace Trazo {
                 RoundedEdges = false;
             }
 
-            private int Radius => (int)Math.Round(12 * owner.scale);
-
             protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e) {
-                Graphics g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                var r = new Rectangle(0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
-                using GraphicsPath path = Ui.RoundedRect(r, Radius);
-
-                if (owner.toolbarBackdrop is Bitmap backdrop) {
-                    GraphicsState state = g.Save();
-                    g.SetClip(path);
-                    g.DrawImageUnscaled(backdrop, 0, 0);
-                    g.Restore(state);
-                }
-                using (var veil = new SolidBrush(Color.FromArgb(205, 18, 18, 20))) g.FillPath(veil, path);
-                using (var edge = new Pen(GlassEdge, 1f)) g.DrawPath(edge, path);
+                using var edge = new Pen(GlassEdge, 1f);
+                owner.DrawGlass(e.Graphics, new Rectangle(Point.Empty, e.ToolStrip.Size), owner.toolbarBackdrop, 205, edge);
             }
 
             protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e) {
@@ -806,6 +835,8 @@ namespace Trazo {
             if (ShowMagnifier) DrawMagnifier(g);
             if (ocrText != null) DrawOcrPreview(g);
             if (status != null) DrawStatus(g);
+            if (customizing) DrawCustomizer(g);
+            DrawTip(g);
         }
 
         /// <summary>Radio de las esquinas de la zona: solo es un detalle visual, la captura sigue siendo rectangular.</summary>
@@ -1230,6 +1261,7 @@ namespace Trazo {
 
         protected override void OnMouseDown(MouseEventArgs e) {
             base.OnMouseDown(e);
+            if (customizing) { CustomizeMouseDown(e); return; }
 
             if (textEditor != null) {
                 CommitText();
@@ -1336,6 +1368,7 @@ namespace Trazo {
         /// </summary>
         protected override void OnMouseWheel(MouseEventArgs e) {
             base.OnMouseWheel(e);
+            if (customizing) return;
             WheelStyle(e);
         }
 
@@ -1386,6 +1419,7 @@ namespace Trazo {
 
         protected override void OnMouseDoubleClick(MouseEventArgs e) {
             base.OnMouseDoubleClick(e);
+            if (customizing) return;
             if (phase != Phase.Editing || textEditor != null || e.Button != MouseButtons.Left) return;
             if (tool == Tool.Picker || resizing != Edge.None || movingSelection || shapeResize != Edge.None) return;
 
@@ -1462,6 +1496,7 @@ namespace Trazo {
 
         protected override void OnMouseMove(MouseEventArgs e) {
             base.OnMouseMove(e);
+            if (customizing) { CustomizeMouseMove(e); return; }
 
             if (ShowMagnifier) {
                 Invalidate(MagnifierRect(mouse));
@@ -1539,6 +1574,7 @@ namespace Trazo {
 
         protected override void OnMouseUp(MouseEventArgs e) {
             base.OnMouseUp(e);
+            if (customizing) { CustomizeMouseUp(e); return; }
 
             if (phase == Phase.Selecting) {
                 if (selectStart == null || e.Button != selectButton) return;
@@ -2362,6 +2398,7 @@ namespace Trazo {
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData) {
             if (textEditor != null) return base.ProcessCmdKey(ref msg, keyData);
+            if (customizing) return CustomizeKey(keyData);
 
             if (keyData == Keys.Escape) {
                 if (ocrText != null) {

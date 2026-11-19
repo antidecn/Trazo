@@ -2,7 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace Trazo {
 
-    internal enum IconKind { Arrow, PathArrowStraight, PathArrowRounded, Line, Rectangle, Ellipse, Text, Pixelate, Picker, Undo, Ocr, Copy, Save, Close, Update, Help }
+    internal enum IconKind { Arrow, PathArrowStraight, PathArrowRounded, Line, Rectangle, Ellipse, Text, Pixelate, Picker, Undo, Ocr, Copy, Save, Close, Update, Help, Check }
 
     /// <summary>
     /// Iconos de la barra dibujados por código: nítidos a cualquier escala y sin archivos de recursos.
@@ -125,6 +125,10 @@ namespace Trazo {
                         g.DrawLine(pen, 18, 6, 6, 18);
                         break;
 
+                    case IconKind.Check:
+                        g.DrawLines(pen, new PointF[] { new(5, 12.5f), new(10, 17.5f), new(19, 7) });
+                        break;
+
                     case IconKind.Update:
                         // Dos flechas en círculo
                         g.DrawArc(pen, 5, 5, 14, 14, 200, 130);
@@ -210,6 +214,17 @@ namespace Trazo {
             using var pen = new Pen(ink, Math.Min(width, 9f)) { StartCap = LineCap.Round, EndCap = LineCap.Round };
             g.DrawLine(pen, 5, 12, 19, 12);
         });
+
+        /// <summary>Tres puntos en vertical en una imagen estrecha (el botón de personalizar la barra).</summary>
+        public static Bitmap MoreDots(int size, Color ink) {
+            var bmp = new Bitmap(Math.Max(4, size * 2 / 5), size);
+            using var g = Graphics.FromImage(bmp);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using var brush = new SolidBrush(ink);
+            float d = size * 3.4f / 24, step = size * 6f / 24, cx = bmp.Width / 2f, cy = size / 2f;
+            for (int i = -1; i <= 1; i++) g.FillEllipse(brush, cx - d / 2, cy + i * step - d / 2, d, d);
+            return bmp;
+        }
 
         private static Bitmap Draw(int size, Action<Graphics> paint) {
             var bmp = new Bitmap(size, size);
